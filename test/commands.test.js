@@ -28,5 +28,5 @@ test("every command builds a valid slash command", { skip: !hasDiscord && "disco
 		assert.equal(typeof command.execute, "function", file);
 		names.add(json.name);
 	}
-	assert.equal(names.size, 29);
+	assert.equal(names.size, 30);
 });

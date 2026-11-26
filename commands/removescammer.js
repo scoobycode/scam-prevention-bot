@@ -3,6 +3,7 @@
 const roblox = require("../src/roblox");
 const { deleteMessages, fetchAllMessages } = require("../src/db");
 const { LEVELS } = require("../src/permissions");
+const { isPostFor } = require("../src/scammer-post");
 const { EPHEMERAL, field, getChannel, modLog, slash } = require("../src/util");
 
 module.exports = {
@@ -22,7 +23,7 @@ module.exports = {
 		await stores.scammers.delete(user.id);
 		// Also remove their public post.
 		const posts = await getChannel(client, config.channels.scammerPosts);
-		const matches = (await fetchAllMessages(posts)).filter((m) => m.content.includes(`/users/${user.id}/`));
+		const matches = (await fetchAllMessages(posts)).filter((m) => isPostFor(m, user.id));
 		await deleteMessages(matches).catch((err) => console.warn("Couldn't remove the scammer post:", err));
 
 		await interaction.editReply(`✅ Removed **${user.name}** from the scammer database.`);

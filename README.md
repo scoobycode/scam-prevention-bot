@@ -39,7 +39,7 @@ Without these, the bot only needs the default intents.
 
 **Support** (support server only): `/accept` `/decline` `/addscammer` `/removescammer` `/blacklist` `/unblacklist` `/guildblacklist` `/guildunblacklist` `/open` `/close`
 
-**Owners** (support server only): `/puser` `/generate` `/resetcase` `/setupdates`
+**Owners** (support server only): `/puser` `/generate` `/resetcase` `/setupdates` `/refreshscammers`
 
 ## How data is stored
 

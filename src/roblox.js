@@ -95,6 +95,38 @@ function getAvatarUrl(id, kind = "full") {
 /** Same as getAvatarUrl, but never throws (an avatar is never worth failing a command over). */
 const tryAvatarUrl = (id, kind) => getAvatarUrl(id, kind).catch(() => null);
 
+/** Looks up to 100 users per request. Returns a Map of id -> { id, name, displayName }; missing IDs are left out. */
+async function getUsersBatch(ids) {
+	const users = new Map();
+	for (let i = 0; i < ids.length; i += 100) {
+		const chunk = ids.slice(i, i + 100).map(Number);
+		const body = await robloxFetch("https://users.roblox.com/v1/users", {
+			method: "POST",
+			body: JSON.stringify({ userIds: chunk, excludeBannedUsers: false }),
+		});
+		for (const user of body?.data ?? []) users.set(String(user.id), { id: String(user.id), name: user.name, displayName: user.displayName });
+	}
+	return users;
+}
+
+/** Full-body avatar pictures for up to 100 users per request. Returns a Map of id -> image URL. */
+async function getAvatarUrlsBatch(ids) {
+	const urls = new Map();
+	for (let i = 0; i < ids.length; i += 100) {
+		let pending = ids.slice(i, i + 100);
+		for (let attempt = 0; attempt < 3 && pending.length; attempt++) {
+			if (attempt) await new Promise((resolve) => setTimeout(resolve, 1500));
+			const body = await robloxFetch(`https://thumbnails.roblox.com/v1/users/avatar?userIds=${pending.join(",")}&size=420x420&format=Png&isCircular=false`);
+			for (const image of body?.data ?? []) {
+				if (image.state === "Completed" && image.imageUrl) urls.set(String(image.targetId), image.imageUrl);
+			}
+			const stillPending = new Set((body?.data ?? []).filter((image) => image.state === "Pending").map((image) => String(image.targetId)));
+			pending = pending.filter((id) => stillPending.has(String(id)));
+		}
+	}
+	return urls;
+}
+
 /** Accepts a username (or a numeric user ID) and returns { id, name, displayName } or null. */
 async function resolveUser(input) {
 	const value = String(input ?? "").trim();
@@ -117,9 +149,11 @@ module.exports = {
 	RobloxError,
 	findUserByUsername,
 	getAvatarUrl,
+	getAvatarUrlsBatch,
 	getFriendCount,
 	getUser,
 	getUserFresh,
+	getUsersBatch,
 	profileUrl,
 	resolveUser,
 	tryAvatarUrl,

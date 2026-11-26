@@ -55,3 +55,23 @@ test("tryAvatarUrl never throws", async () => {
 	roblox._setFetch(async () => json(500, {}));
 	assert.equal(await roblox.tryAvatarUrl("8", "headshot"), null);
 });
+
+test("batch lookups split into requests of 100", async () => {
+	const ids = Array.from({ length: 150 }, (_, i) => String(i + 1));
+	const seen = [];
+	roblox._setFetch(async (url, init) => {
+		if (url.endsWith("/v1/users")) {
+			const { userIds } = JSON.parse(init.body);
+			seen.push(userIds.length);
+			return json(200, { data: userIds.map((id) => ({ id, name: `user${id}`, displayName: `User ${id}` })) });
+		}
+		const userIds = new URL(url).searchParams.get("userIds").split(",");
+		return json(200, { data: userIds.map((id) => ({ targetId: Number(id), state: "Completed", imageUrl: `https://img/${id}.png` })) });
+	});
+	const users = await roblox.getUsersBatch(ids);
+	const avatars = await roblox.getAvatarUrlsBatch(ids);
+	assert.deepEqual(seen, [100, 50]);
+	assert.equal(users.get("150").name, "user150");
+	assert.equal(avatars.get("1"), "https://img/1.png");
+	assert.equal(avatars.size, 150);
+});
