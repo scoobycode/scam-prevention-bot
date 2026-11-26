@@ -58,8 +58,8 @@ module.exports = {
 
 	links: {
 		premium: "https://selly.gg/p/3b0483db",
-		// The old invite expired. Set SUPPORT_INVITE in .env to a new permanent invite link.
-		supportServer: process.env.SUPPORT_INVITE || "https://discord.gg/53Jgcu5",
+		// Shown by /server and in error messages. SUPPORT_INVITE in .env overrides it.
+		supportServer: process.env.SUPPORT_INVITE || "https://discord.gg/3dECRh8",
 	},
 
 	// When this user goes live, the bot's status shows their stream.
