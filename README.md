@@ -43,7 +43,13 @@ Without these, the bot only needs the default intents.
 
 ## How data is stored
 
-The bot still keeps its data as messages in private channels of the database server, in the same format as before, so no existing data needs moving. Everything is loaded into memory at startup, so commands don't have to read the channels again. Channel and role IDs live in `config.js`.
+Everything lives in the support server (`guilds.support` in `config.js`). On startup the bot finds the channels it needs by name, and creates any that are missing:
+
+- **Scam Reports Bot** (staff only): `#scam-reports`, `#scam-logs`, `#premium-requests`
+- **`#list-of-scammers`** (public, read-only)
+- **Scam Bot Database** (bot only): one channel per kind of data, stored as messages
+
+The bot needs **Administrator** (or Manage Channels + Manage Roles) in the support server to create them. If the scammer database is empty, it's rebuilt from the posts in `#list-of-scammers`. Data is loaded into memory at startup, so commands are instant.
 
 ## Development
 

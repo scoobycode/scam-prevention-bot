@@ -1,7 +1,8 @@
 "use strict";
 
 const { ActionRowBuilder, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require("discord.js");
-const { COLORS, EPHEMERAL, field, getChannel, slash } = require("../src/util");
+const { channelFor } = require("../src/channels");
+const { COLORS, EPHEMERAL, field, slash } = require("../src/util");
 
 const input = (id, label, style, maxLength) => new ActionRowBuilder().addComponents(
 	new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(style).setMaxLength(maxLength).setRequired(true),
@@ -27,7 +28,7 @@ module.exports = {
 		await interaction.showModal(modal);
 	},
 
-	async handleComponent(interaction, { client, config, isPremium }) {
+	async handleComponent(interaction, { isPremium }) {
 		if (!interaction.isModalSubmit()) return;
 		if (!isPremium(interaction.user.id)) return interaction.reply({ content: "Your premium has expired.", flags: EPHEMERAL });
 
@@ -42,7 +43,7 @@ module.exports = {
 				field("Description", value("description")),
 				field("How To Contact", value("contact")),
 			);
-		const channel = await getChannel(client, config.channels.premiumRequests);
+		const channel = channelFor("premiumRequests");
 		await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
 		await interaction.reply({ content: "✅ Your request was sent! Abusing this will get your premium removed without a refund.", flags: EPHEMERAL });
 	},

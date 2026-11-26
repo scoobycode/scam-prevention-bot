@@ -13,10 +13,9 @@ module.exports = {
 	ownerId: "291367352476631040",
 
 	guilds: {
-		// Support server: staff roles live here and staff-only commands are registered here.
+		// Your support server ("Roblox Dev Requests"). Staff roles live here, staff-only commands are
+		// registered here, and the bot creates the channels it needs here (see `channels` below).
 		support: "400508946709872660",
-		// Private server whose channels are used as the bot's database.
-		database: "443929284411654144",
 	},
 
 	roles: {
@@ -25,32 +24,42 @@ module.exports = {
 		owner: "400511217061330955",
 	},
 
+	// Channels the bot uses in the support server. On startup it looks for each one by name and creates
+	// it if it's missing (legacyId is tried first, for channels that still exist from the old setup).
+	//   staff    = only the bot and staff roles can see it
+	//   public   = everyone can read, only the bot can post
+	//   database = only the bot can see it; it stores the bot's data as messages
 	channels: {
-		reports: "469621223513522216",
-		modLogs: "469621338089324544",
-		scammers: "444588565154889738",
-		scammerPosts: "469615976522973189",
-		blacklistedUsers: "444588561858035723",
-		blacklistedGuilds: "444588563032440833",
-		premiumCodes: "444588560859791381",
-		premiumUsers: "444588564056113162",
-		caseCounter: "444588562793627668",
-		updates: "444588564328742926",
-		premiumRequests: "434126927406825474",
-		// First Roblox verification channel. Every channel named *roblox-database* in the database server is read too.
-		legacyVerified: "443931376287481858",
-		upvoteHolding: "448615839533498388",
-		upvoteAnnounce: "469615231618777118",
+		reports: { name: "scam-reports", kind: "staff", legacyId: "469621223513522216" },
+		modLogs: { name: "scam-logs", kind: "staff", legacyId: "469621338089324544" },
+		premiumRequests: { name: "premium-requests", kind: "staff", legacyId: "434126927406825474" },
+		scammerPosts: { name: "list-of-scammers", kind: "public", legacyId: "469615976522973189" },
+		scammers: { name: "db-scammers", kind: "database" },
+		blacklistedUsers: { name: "db-blacklisted-users", kind: "database" },
+		blacklistedGuilds: { name: "db-blacklisted-servers", kind: "database" },
+		premiumCodes: { name: "db-premium-codes", kind: "database" },
+		premiumUsers: { name: "db-premium-users", kind: "database" },
+		verified: { name: "db-verified", kind: "database" },
+		settings: { name: "db-settings", kind: "database" },
 	},
 
-	messages: {
-		caseCounter: "444593973764292618",
-		updates: "444593973756166155",
+	// Categories new channels are created in.
+	categories: {
+		staff: "Scam Reports Bot",
+		public: null,
+		database: "Scam Bot Database",
+	},
+
+	// Upvote relay channels (only used with UPVOTE_RELAY=true).
+	upvotes: {
+		holding: process.env.UPVOTE_HOLDING_CHANNEL || "448615839533498388",
+		announce: process.env.UPVOTE_ANNOUNCE_CHANNEL || "469615231618777118",
 	},
 
 	links: {
 		premium: "https://selly.gg/p/3b0483db",
-		supportServer: "https://discord.gg/53Jgcu5",
+		// The old invite expired. Set SUPPORT_INVITE in .env to a new permanent invite link.
+		supportServer: process.env.SUPPORT_INVITE || "https://discord.gg/53Jgcu5",
 	},
 
 	// When this user goes live, the bot's status shows their stream.

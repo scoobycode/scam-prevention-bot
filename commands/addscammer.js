@@ -3,7 +3,8 @@
 const roblox = require("../src/roblox");
 const { scammerPost } = require("../src/scammer-post");
 const { LEVELS } = require("../src/permissions");
-const { EPHEMERAL, field, getChannel, modLog, slash } = require("../src/util");
+const { channelFor } = require("../src/channels");
+const { EPHEMERAL, field, modLog, slash } = require("../src/util");
 
 module.exports = {
 	category: "Support",
@@ -12,7 +13,7 @@ module.exports = {
 	data: slash("addscammer", "Adds a scammer to the scammers database")
 		.addStringOption((o) => o.setName("username").setDescription("The scammer's Roblox username").setRequired(true).setMaxLength(20)),
 
-	async execute(interaction, { client, config, stores }) {
+	async execute(interaction, { client, stores }) {
 		const username = interaction.options.getString("username", true);
 		await interaction.deferReply({ flags: EPHEMERAL });
 		const user = await roblox.resolveUser(username);
@@ -20,7 +21,7 @@ module.exports = {
 		if (stores.scammers.has(user.id)) return interaction.editReply(`**${user.name}** is already in the scammer database!`);
 
 		await stores.scammers.set({ key: user.id });
-		const posts = await getChannel(client, config.channels.scammerPosts);
+		const posts = channelFor("scammerPosts");
 		const avatar = await roblox.tryAvatarUrl(user.id, "full");
 		await posts.send(scammerPost(user, avatar)).catch((err) => console.warn("Couldn't post the new scammer:", err));
 		await interaction.editReply(`✅ Added **${user.name}** to the scammer database.`);

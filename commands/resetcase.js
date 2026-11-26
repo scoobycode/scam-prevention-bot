@@ -1,18 +1,16 @@
 "use strict";
 
 const { LEVELS } = require("../src/permissions");
-const { EPHEMERAL, getChannel, slash } = require("../src/util");
+const { EPHEMERAL, slash } = require("../src/util");
 
 module.exports = {
 	category: "Owners",
 	staffOnly: true,
 	requiredLevel: LEVELS.OWNER,
 	data: slash("resetcase", "Resets case numbers for the report command"),
-	async execute(interaction, { client, config }) {
+	async execute(interaction, { stores }) {
 		await interaction.deferReply({ flags: EPHEMERAL });
-		const channel = await getChannel(client, config.channels.caseCounter);
-		const counter = await channel.messages.fetch(config.messages.caseCounter);
-		await counter.edit("1");
-		await interaction.editReply("✅ Case numbers reset.");
+		await stores.meta.set("case-counter", "0");
+		await interaction.editReply("✅ Case numbers reset. The next report will be case #1.");
 	},
 };

@@ -11,6 +11,7 @@ const cache = new Map();
 
 class RobloxError extends Error {
 	name = "RobloxError";
+	expose = true;
 }
 
 function cached(key, load) {

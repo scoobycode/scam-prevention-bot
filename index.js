@@ -4,7 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { Client, Collection, Events, GatewayIntentBits } = require("discord.js");
 const config = require("./config");
-const { createStores, isPremium, sweepExpiredPremium } = require("./src/stores");
+const { setupChannels } = require("./src/channels");
+const { createStores, isPremium, seedScammersFromPosts, sweepExpiredPremium } = require("./src/stores");
 const { ReportIndex } = require("./src/reports");
 const { getPermissionLevel } = require("./src/permissions");
 const { registerCommands } = require("./src/register");
@@ -48,6 +49,7 @@ let ready = false;
 // ---- Startup -------------------------------------------------------------------------------
 
 client.once(Events.ClientReady, async () => {
+	await setupChannels(client).catch((err) => console.error("Channel setup failed:", err.message));
 	await stores.loadAll();
 	await reports.load().then((n) => console.log(`Loaded ${n} open reports.`)).catch((err) => console.error("Couldn't load open reports:", err));
 	await registerCommands(client, commands).catch((err) => console.error("Couldn't register slash commands:", err));
@@ -64,6 +66,7 @@ client.once(Events.ClientReady, async () => {
 	setInterval(() => sweepExpiredPremium(client, stores), 10 * 60 * 1000).unref();
 
 	ready = true;
+	seedScammersFromPosts(stores).catch((err) => console.error("Couldn't rebuild the scammer database:", err));
 	console.log(`${client.user.tag} is online. ${commands.size} commands loaded.`);
 });
 
@@ -107,7 +110,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 		}
 	} catch (err) {
 		console.error(`Error handling ${interaction.isChatInputCommand() ? `/${interaction.commandName}` : interaction.customId}:`, err);
-		const message = err?.name === "RobloxError" ? err.message : "Something went wrong. Please try again, and contact support with /server if it keeps happening.";
+		const message = err?.expose ? err.message : "Something went wrong. Please try again, and contact support with /server if it keeps happening.";
 		await respond(interaction, { content: message, flags: EPHEMERAL, embeds: [], components: [] }).catch(() => {});
 	}
 });

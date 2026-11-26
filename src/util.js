@@ -1,7 +1,6 @@
 "use strict";
 
 const { EmbedBuilder, InteractionContextType, MessageFlags, SlashCommandBuilder, time, TimestampStyles } = require("discord.js");
-const config = require("../config");
 
 const COLORS = { info: 0x0000ff, log: 0xff0000 };
 const EPHEMERAL = MessageFlags.Ephemeral;
@@ -28,7 +27,7 @@ async function getChannel(client, id) {
 /** Posts an entry to the staff log channel. Never throws. */
 async function modLog(client, title, fields, extra = {}) {
 	try {
-		const channel = await getChannel(client, config.channels.modLogs);
+		const channel = require("./channels").channelFor("modLogs");
 		const embed = new EmbedBuilder().setTitle(title).setColor(COLORS.log).addFields(fields).setTimestamp();
 		await channel.send({ embeds: [embed], allowedMentions: { parse: [] }, ...extra });
 	} catch (err) {

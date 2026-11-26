@@ -12,7 +12,7 @@ module.exports.start = async (client, ctx) => {
 	const { config } = ctx;
 	if (!config.features.upvoteRelay) return;
 
-	const announce = await getChannel(client, config.channels.upvoteAnnounce).catch(() => null);
+	const announce = await getChannel(client, config.upvotes.announce).catch(() => null);
 	if (!announce) return console.warn("Upvote relay: couldn't access the announcement channel.");
 
 	const relay = async (message) => {
@@ -28,12 +28,12 @@ module.exports.start = async (client, ctx) => {
 	};
 
 	// Catch up on votes that came in while the bot was offline.
-	const holding = await getChannel(client, config.channels.upvoteHolding).catch(() => null);
+	const holding = await getChannel(client, config.upvotes.holding).catch(() => null);
 	if (holding) {
 		for (const message of (await fetchAllMessages(holding)).reverse()) await relay(message);
 	}
 
 	client.on(Events.MessageCreate, (message) => {
-		if (message.channelId === config.channels.upvoteHolding) relay(message);
+		if (message.channelId === config.upvotes.holding) relay(message);
 	});
 };

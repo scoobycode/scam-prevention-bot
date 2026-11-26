@@ -1,8 +1,7 @@
 "use strict";
 
-const config = require("../config");
+const { channelFor } = require("./channels");
 const { fetchAllMessages } = require("./db");
-const { getChannel } = require("./util");
 
 const UNKNOWN_MESSAGE = 10008;
 
@@ -25,7 +24,7 @@ class ReportIndex {
 	}
 
 	async load() {
-		this.channel = await getChannel(this.client, config.channels.reports);
+		this.channel = channelFor("reports");
 		const byCase = new Map();
 		for (const message of await fetchAllMessages(this.channel)) {
 			const report = readReport(message);
@@ -81,12 +80,10 @@ class ReportIndex {
 
 // Case numbers are handed out one at a time so two reports can never get the same number.
 let caseQueue = Promise.resolve();
-function nextCaseNumber(client) {
+function nextCaseNumber(stores) {
 	const next = caseQueue.then(async () => {
-		const channel = await getChannel(client, config.channels.caseCounter);
-		const counter = await channel.messages.fetch(config.messages.caseCounter);
-		const value = (Number.parseInt(counter.content, 10) || 0) + 1;
-		await counter.edit(String(value));
+		const value = (Number.parseInt(stores.meta.get("case-counter", "0"), 10) || 0) + 1;
+		await stores.meta.set("case-counter", String(value));
 		return value;
 	});
 	caseQueue = next.catch(() => {});

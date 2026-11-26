@@ -4,7 +4,8 @@ const roblox = require("../src/roblox");
 const { deleteMessages, fetchAllMessages } = require("../src/db");
 const { LEVELS } = require("../src/permissions");
 const { isPostFor, scammerPost } = require("../src/scammer-post");
-const { EPHEMERAL, field, getChannel, modLog, slash } = require("../src/util");
+const { channelFor } = require("../src/channels");
+const { EPHEMERAL, field, modLog, slash } = require("../src/util");
 
 let running = false;
 
@@ -14,7 +15,7 @@ module.exports = {
 	requiredLevel: LEVELS.OWNER,
 	data: slash("refreshscammers", "Reposts every scammer in the scammer list channel with their current name and avatar"),
 
-	async execute(interaction, { client, config, stores }) {
+	async execute(interaction, { client, stores }) {
 		if (running) return interaction.reply({ content: "A refresh is already running.", flags: EPHEMERAL });
 		running = true;
 		try {
@@ -26,7 +27,7 @@ module.exports = {
 			// Batched: 100 users per Roblox request instead of one request each.
 			const [users, avatars] = await Promise.all([roblox.getUsersBatch(ids), roblox.getAvatarUrlsBatch(ids)]);
 
-			const channel = await getChannel(client, config.channels.scammerPosts);
+			const channel = channelFor("scammerPosts");
 			let oldPosts = await fetchAllMessages(channel);
 
 			let done = 0;

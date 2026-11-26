@@ -3,7 +3,8 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("discord.js");
 const roblox = require("../src/roblox");
 const { nextCaseNumber } = require("../src/reports");
-const { COLORS, EPHEMERAL, field, getChannel, infoEmbed, slash, timestamp, truncate } = require("../src/util");
+const { channelFor } = require("../src/channels");
+const { COLORS, EPHEMERAL, field, infoEmbed, slash, timestamp, truncate } = require("../src/util");
 
 const DRAFT_TTL_MS = 10 * 60 * 1000;
 const drafts = new Map();
@@ -60,10 +61,10 @@ module.exports = {
 		.addAttachmentOption((o) => o.setName("proof3").setDescription("More proof"))
 		.addStringOption((o) => o.setName("links").setDescription("Links to more proof, separated by spaces").setMaxLength(1000)),
 
-	async execute(interaction, { client, config, reports, stores }) {
+	async execute(interaction, { reports, stores }) {
 		await interaction.deferReply({ flags: EPHEMERAL });
 
-		const channel = await getChannel(client, config.channels.reports);
+		const channel = channelFor("reports");
 		if ((channel.topic ?? "").trim().toLowerCase() === "closed") return interaction.editReply("🔨 We are currently undergoing maintenance! We will be back soon! 🔨");
 		if (stores.blacklistedUsers.has(interaction.user.id)) return interaction.editReply("You cannot use this command because you are blacklisted!");
 		if (stores.blacklistedGuilds.has(interaction.guildId)) return interaction.editReply("You cannot use this command because this server is blacklisted from using it!");
@@ -114,15 +115,16 @@ module.exports = {
 		});
 	},
 
-	async handleComponent(interaction, { client, config, reports }, [action]) {
+	async handleComponent(interaction, { reports, stores }, [action]) {
 		const draft = drafts.get(interaction.user.id);
 		drafts.delete(interaction.user.id);
 		if (!draft) return interaction.update({ content: "This report expired. Run `/report` again.", embeds: [], components: [] });
 		if (action !== "confirm") return interaction.update({ content: "Prompt Cancelled.", embeds: [], components: [] });
 
 		await interaction.update({ content: "Sending your report…", embeds: [], components: [] });
-		const caseNumber = await nextCaseNumber(client);
-		const [reportsChannel, logChannel] = await Promise.all([getChannel(client, config.channels.reports), getChannel(client, config.channels.modLogs)]);
+		const caseNumber = await nextCaseNumber(stores);
+		const reportsChannel = channelFor("reports");
+		const logChannel = channelFor("modLogs");
 		const [sent] = await Promise.all([
 			sendReport(reportsChannel, reportEmbed("New Scam Report", draft, caseNumber), draft),
 			sendReport(logChannel, reportEmbed("Copy Of Report - Logging Purposes", draft, caseNumber), draft).catch((err) => console.warn("Couldn't log report copy:", err)),
