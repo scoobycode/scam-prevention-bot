@@ -1,12 +1,11 @@
 "use strict";
 
 // /report flow:
-//   1. /report  + attach a screenshot (up to 3)
-//   2. A form pops up: scammer's username, your username, what happened, optional links
-//   3. A preview with the scammer's avatar: Send / Edit / Cancel
-//   4. Sent to staff, with the screenshots re-uploaded so they never expire
+//   1. Type /report (nothing else) and a form pops up with every question and a screenshot upload box
+//   2. A preview with the scammer's avatar: Send / Edit / Cancel
+//   3. Sent to staff, with the screenshots re-uploaded so they never expire
 
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require("discord.js");
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, FileUploadBuilder, LabelBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require("discord.js");
 const roblox = require("../src/roblox");
 const { nextCaseNumber } = require("../src/reports");
 const { channelFor } = require("../src/channels");
@@ -27,29 +26,36 @@ function saveDraft(userId, draft) {
 const isMedia = (attachment) => !attachment.contentType || /^(image|video)\//.test(attachment.contentType);
 
 function form(draft) {
-	const input = (id, label, style, { placeholder, value, min, max, required = true }) => {
-		const text = new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(style).setRequired(required).setMaxLength(max);
-		if (placeholder) text.setPlaceholder(placeholder);
-		if (min) text.setMinLength(min);
-		if (value) text.setValue(value);
-		return new ActionRowBuilder().addComponents(text);
+	const text = (id, label, description, style, { placeholder, value, min, max, required = true }) => {
+		const input = new TextInputBuilder().setCustomId(id).setStyle(style).setRequired(required).setMaxLength(max);
+		if (placeholder) input.setPlaceholder(placeholder);
+		if (min) input.setMinLength(min);
+		if (value) input.setValue(value);
+		return new LabelBuilder().setLabel(label).setDescription(description).setTextInputComponent(input);
 	};
+	// Files can't be pre-filled, so when editing, the screenshots already added are kept unless new ones are uploaded.
+	const hasProof = draft.attachments?.length > 0;
+	const upload = new LabelBuilder()
+		.setLabel("Screenshots or videos")
+		.setDescription(hasProof ? `Leave empty to keep the ${draft.attachments.length} you already added.` : "Proof of the scam: the trade, the chat, anything that shows what happened.")
+		.setFileUploadComponent(new FileUploadBuilder().setCustomId("proof").setMinValues(hasProof ? 0 : 1).setMaxValues(5).setRequired(!hasProof));
+
 	return new ModalBuilder()
 		.setCustomId("report:form")
 		.setTitle("Report a scammer")
-		.addComponents(
-			input("scammer", "Scammer's Roblox username", TextInputStyle.Short, { placeholder: "e.g. Builderman", value: draft.scammerInput, min: 3, max: 20 }),
-			input("yours", "Your Roblox username", TextInputStyle.Short, { placeholder: "So staff can check your side of the trade", value: draft.reporterRoblox, min: 3, max: 20 }),
-			input("what", "What happened?", TextInputStyle.Paragraph, {
+		.addLabelComponents(
+			text("scammer", "Scammer's Roblox username", "Their username, not their display name.", TextInputStyle.Short, { placeholder: "e.g. Builderman", value: draft.scammerInput, min: 3, max: 20 }),
+			text("yours", "Your Roblox username", "So staff can check your side of the trade.", TextInputStyle.Short, { placeholder: "e.g. Roblox", value: draft.reporterRoblox, min: 3, max: 20 }),
+			text("what", "What happened?", "Tell us what was agreed and how they scammed you.", TextInputStyle.Paragraph, {
 				placeholder: "e.g. I traded my Dominus for 50k Robux, sent it, and they left without paying.",
 				value: draft.description,
-				min: 20,
+				min: 10,
 				max: 1000,
 			}),
-			input("links", "Extra proof links (optional)", TextInputStyle.Paragraph, {
-				placeholder: "YouTube, Gyazo or imgur links, one per line",
+			upload,
+			text("links", "Video links (optional)", "YouTube, Gyazo or Medal links, one per line.", TextInputStyle.Paragraph, {
 				value: draft.links?.join("\n"),
-				max: 1000,
+				max: 500,
 				required: false,
 			}),
 		);
@@ -132,22 +138,14 @@ async function blocker(interaction, { reports, stores }) {
 
 module.exports = {
 	category: "Public",
-	data: slash("report", "Report a scammer to our staff (attach a screenshot as proof)")
-		.addAttachmentOption((o) => o.setName("screenshot").setDescription("A screenshot or video that shows the scam").setRequired(true))
-		.addAttachmentOption((o) => o.setName("screenshot2").setDescription("Another screenshot (optional)"))
-		.addAttachmentOption((o) => o.setName("screenshot3").setDescription("Another screenshot (optional)")),
+	data: slash("report", "Report a scammer to our staff team"),
 
 	async execute(interaction, ctx) {
 		const reason = await blocker(interaction, ctx);
 		if (reason) return interaction.reply({ content: reason, flags: EPHEMERAL });
 
-		const attachments = ["screenshot", "screenshot2", "screenshot3"].map((name) => interaction.options.getAttachment(name)).filter(Boolean);
-		if (!attachments.every(isMedia)) {
-			return interaction.reply({ content: "Proof has to be a picture or a video (like a .png, .jpg or .mp4). Please try again with a screenshot.", flags: EPHEMERAL });
-		}
-
 		const draft = {
-			attachments: attachments.map((a) => ({ url: a.url, name: a.name, contentType: a.contentType })),
+			attachments: [],
 			links: [],
 			reporterId: interaction.user.id,
 			reporterName: interaction.user.username,
@@ -185,6 +183,14 @@ module.exports = {
 			const rawLinks = value("links").split(/\s+/).filter(Boolean);
 			draft.links = rawLinks.filter((link) => /^https?:\/\/\S+$/i.test(link));
 			const badLinks = rawLinks.length - draft.links.length;
+
+			const uploaded = [...(interaction.fields.getUploadedFiles("proof", false)?.values() ?? [])];
+			if (uploaded.length) {
+				if (!uploaded.every(isMedia)) {
+					return interaction.editReply({ content: "", embeds: [infoEmbed("Proof has to be pictures or videos (like .png, .jpg or .mp4). Press **Fix it** to upload them again.")], components: [buttons(FIX, CANCEL)] });
+				}
+				draft.attachments = uploaded.map((a) => ({ url: a.url, name: a.name, contentType: a.contentType }));
+			}
 
 			const problem = (text) => interaction.editReply({ content: "", embeds: [infoEmbed(text)], components: [buttons(FIX, CANCEL)] });
 
