@@ -1,12 +1,11 @@
+"use strict";
+
+const { slash } = require("../src/util");
+
 module.exports = {
-	help: {
-		name: "buypremium",
-		description: "Gives you a link to buy premium",
-		type: "Public"
+	category: "Public",
+	data: slash("buypremium", "Gives you a link to buy premium"),
+	async execute(interaction, { config }) {
+		await interaction.reply(`**You can buy premium here!:** ${config.links.premium}`);
 	},
-	run: async (bot, message) => {
-		message.reply("**You can buy premium here!:** https://selly.gg/p/3b0483db").catch(() => {
-			message.author.send(`You attempted to use the \`buypremium\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-		});
-	}
 };

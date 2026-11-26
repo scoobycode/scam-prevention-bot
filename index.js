@@ -1,136 +1,125 @@
-const botconfig = require("./botconfig.js");
-const Discord = require("discord.js");
-const fs = require("fs");
-const bot = new Discord.Client({ disableEveryone: true, fetchAllMembers: true });
-bot.loaders = { enabledLoaders: [], disabledLoaders: [] };
-bot.data = { prefixes: [], inPrompt: [], blacklistedUsers: [], blacklistedGuilds: [], scammers: [], codes: [], pusers: [], timeout: [] };
-bot.auto = false;
-bot.commands = new Discord.Collection();
-bot.disabledCommands = [];
-bot.defaultPrefix = botconfig.prefix;
+"use strict";
 
-let files = fs.readdirSync(__dirname + "/load");
-for (let file of files) {
+const fs = require("node:fs");
+const path = require("node:path");
+const { Client, Collection, Events, GatewayIntentBits } = require("discord.js");
+const config = require("./config");
+const { createStores, isPremium, sweepExpiredPremium } = require("./src/stores");
+const { ReportIndex } = require("./src/reports");
+const { getPermissionLevel } = require("./src/permissions");
+const { registerCommands } = require("./src/register");
+const { EPHEMERAL, respond } = require("./src/util");
+
+if (!config.token) {
+	console.error("No bot token found. Set BOT_TOKEN in your environment or in a .env file.");
+	process.exit(1);
+}
+
+// Slash commands only need the Guilds intent. The optional features ask for more.
+const intents = [GatewayIntentBits.Guilds];
+if (config.features.streamStatus) intents.push(GatewayIntentBits.GuildPresences);
+if (config.features.upvoteRelay) intents.push(GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent);
+
+const client = new Client({
+	intents,
+	// Never ping @everyone or roles from bot messages.
+	allowedMentions: { parse: ["users"] },
+});
+
+// ---- Load commands -------------------------------------------------------------------------
+
+const commands = new Collection();
+const commandsDir = path.join(__dirname, "commands");
+for (const file of fs.readdirSync(commandsDir).filter((f) => f.endsWith(".js"))) {
 	try {
-		let loader = require("./load/" + file);
-		bot.loaders.enabledLoaders.push(loader);
+		const command = require(path.join(commandsDir, file));
+		if (!command.data || typeof command.execute !== "function") throw new Error("it must export `data` and `execute`");
+		commands.set(command.data.name, command);
 	} catch (err) {
-		bot.loaders.disabledLoaders.push(file);
-		console.log(`\nThe ${file} load module failed to load:`);
-		console.log(err);
+		console.error(`The ${file} command failed to load:`, err);
 	}
 }
 
-function checkCommand(command, name) {
-	var resultOfCheck = [true, null];
-	if (!command.run) resultOfCheck[0] = false; resultOfCheck[1] = `Missing Function: "module.run" of ${name}.`;
-	if (!command.help) resultOfCheck[0] = false; resultOfCheck[1] = `Missing Object: "module.help" of ${name}.`;
-	if (command.help && !command.help.name) resultOfCheck[0] = false; resultOfCheck[1] = `Missing String: "module.help.name" of ${name}.`;
-	return resultOfCheck;
-}
+const stores = createStores(client);
+const reports = new ReportIndex(client);
+const ctx = { client, commands, config, reports, stores, isPremium: (userId) => isPremium(stores, userId) };
+let ready = false;
 
-var jsfiles;
+// ---- Startup -------------------------------------------------------------------------------
 
-fs.readdir("./commands/", (err, files) => {
-	if (err) console.log(err);
-	jsfiles = files.filter((f) => f.endsWith(".js"));
-	if (jsfiles.length <= 0) return console.log("Couldn't find commands.");
-	for (let f of jsfiles) {
+client.once(Events.ClientReady, async () => {
+	await stores.loadAll();
+	await reports.load().then((n) => console.log(`Loaded ${n} open reports.`)).catch((err) => console.error("Couldn't load open reports:", err));
+	await registerCommands(client, commands).catch((err) => console.error("Couldn't register slash commands:", err));
+
+	for (const file of fs.readdirSync(path.join(__dirname, "load")).filter((f) => f.endsWith(".js"))) {
 		try {
-			var props = require(`./commands/${f}`);
-			if (checkCommand(props, f)[0]) {
-				bot.commands.set(props.help.name, props);
-			} else {
-				throw checkCommand(props, f)[1];
-			}
+			require(path.join(__dirname, "load", file)).start(client, ctx);
 		} catch (err) {
-			bot.disabledCommands.push(f);
-			console.log(`\nThe ${f} command failed to load:`);
-			console.log(err);
+			console.error(`The ${file} module failed to start:`, err);
 		}
 	}
-});
-bot.on("ready", () => {
-	let loaders = bot.loaders.enabledLoaders;
-	for (let loader of loaders) {
-		if (loader.run != null)
-			loader.run(bot);
-	}
-	console.log(`${bot.user.tag} is online. ` +
-		`${bot.commands.size}/${bot.commands.size + bot.disabledCommands.length}` +
-		" commands loaded successfully.");
+
+	await sweepExpiredPremium(client, stores);
+	setInterval(() => sweepExpiredPremium(client, stores), 10 * 60 * 1000).unref();
+
+	ready = true;
+	console.log(`${client.user.tag} is online. ${commands.size} commands loaded.`);
 });
 
-bot.on("message", async (message) => {
-	if (!message.author.bot && message.channel.type !== "dm") {
-		var args = message.content.split(" ");
-		var rawPrefix = bot.data.prefixes.find((value) => value.guild === message.guild.id);
-		var prefix = (rawPrefix != null) ? rawPrefix.prefix : bot.defaultPrefix;
+// ---- Command handling ----------------------------------------------------------------------
 
-		if (bot.data.pusers.find((value) => value.id === message.author.id) && bot.data.pusers.find((value) => value.id === message.author.id).expires !== "0" && bot.data.pusers.find((value) => value.id === message.author.id).expires < Date.now()) {
-			bot.data.pusers.find((value) => value.id === message.author.id).msg.delete();
-			bot.data.pusers.splice(bot.data.pusers.indexOf(bot.data.pusers.find((value) => value.id === message.author.id)), 1);
-			message.author.send("Your premium has expired!").catch(function () { });
-		}
-		let guild = bot.guilds.get("400508946709872660");
-		var permissionLevel = 0;
-		if (guild.members.get(message.author.id)) {
-			var member = await guild.fetchMember(message.author.id);
-			if (member.roles) {
-				if (member.roles.get("469588873090170880")) permissionLevel = 1;
-				if (member.roles.get("400511826745360405")) permissionLevel = 2;
-				if (member.roles.get("400511217061330955")) permissionLevel = 2;
-			}
-		}
-		//0 = Non-Member or Non-Matching Roles
-		//1 = Scam Reports Support
-		//2 = Co-Owner & Owner
-		var commandFile;
-		if (message.content.startsWith(prefix)) {
-			let cmd = args.shift().toLowerCase();
-			commandFile = bot.commands.get(cmd.slice(prefix.length));
-			if (commandFile != null) {
-				var timeout = bot.data.timeout.find((value) => value.id === message.author.id);
-				if (timeout == null) {
-					bot.setTimeout(() => {
-						bot.data.timeout.splice(bot.data.timeout.indexOf(timeout), 1);
-					}, 2000);
-					bot.data.timeout.push({ id: message.author.id });
-					commandFile.run(bot, message, args, prefix, permissionLevel);
-				} else {
-					message.reply("You cannot use this command yet!").then((sentMessage) => {
-						sentMessage.delete(3500).catch(function () { });
-					}).catch(() => {
-						message.author.send(`You attempted to use a command in ${message.channel}, but I can not chat there.`).catch(function () { });
-					});
-				}
-			}
-		} else if (new RegExp(`^<@!?${bot.user.id}>`, "").test(message.content)) {
-			var mention = args[0];
-			args.shift();
-			if (!args[0]) return;
-			commandFile = bot.commands.get(args[0].toLowerCase());
-			if (commandFile != null) {
-				message.mentions.members.delete(bot.user.id);
-				message.mentions.users.delete(bot.user.id);
-				message.content = message.content.replace(`${mention} `, prefix);
-				args.shift();
-				if (bot.data.timeout.find((value) => value.id === message.author.id) == null) {
-					bot.setTimeout(() => {
-						bot.data.timeout.splice(bot.data.timeout.indexOf(bot.data.timeout.find((value) => value.id === message.author.id)), 1);
-					}, 2000);
-					bot.data.timeout.push({ id: message.author.id });
-					commandFile.run(bot, message, args, prefix, permissionLevel);
-				} else {
-					message.reply("You cannot use this command yet!").then((sentMessage) => {
-						sentMessage.delete(3500).catch(function () { });
-					}).catch(() => {
-						message.author.send(`You attempted to use a command in ${message.channel}, but I can not chat there.`).catch(function () { });
-					});
-				}
+const cooldowns = new Map();
 
-			}
+function onCooldown(userId) {
+	const until = cooldowns.get(userId);
+	if (until && until > Date.now()) return true;
+	cooldowns.set(userId, Date.now() + config.cooldownMs);
+	setTimeout(() => {
+		if ((cooldowns.get(userId) ?? 0) <= Date.now()) cooldowns.delete(userId);
+	}, config.cooldownMs).unref();
+	return false;
+}
+
+async function runCommand(interaction) {
+	const command = commands.get(interaction.commandName);
+	if (!command) return;
+
+	if (!ready) return interaction.reply({ content: "I'm still starting up, please try again in a few seconds.", flags: EPHEMERAL });
+	if (onCooldown(interaction.user.id)) return interaction.reply({ content: "You cannot use this command yet!", flags: EPHEMERAL });
+
+	const permissionLevel = await getPermissionLevel(client, interaction.user.id);
+	const allowed = command.ownerOnly ? interaction.user.id === config.ownerId : permissionLevel >= (command.requiredLevel ?? 0);
+	if (!allowed) return interaction.reply({ content: "You don't have permission to use this command.", flags: EPHEMERAL });
+
+	await command.execute(interaction, { ...ctx, permissionLevel });
+}
+
+client.on(Events.InteractionCreate, async (interaction) => {
+	try {
+		if (interaction.isChatInputCommand()) {
+			await runCommand(interaction);
+		} else if (interaction.isButton() || interaction.isModalSubmit()) {
+			// Buttons and forms use custom IDs like "report:confirm".
+			const [name, ...args] = interaction.customId.split(":");
+			const command = commands.get(name);
+			if (command?.handleComponent) await command.handleComponent(interaction, ctx, args);
 		}
+	} catch (err) {
+		console.error(`Error handling ${interaction.isChatInputCommand() ? `/${interaction.commandName}` : interaction.customId}:`, err);
+		const message = err?.name === "RobloxError" ? err.message : "Something went wrong. Please try again, and contact support with /server if it keeps happening.";
+		await respond(interaction, { content: message, flags: EPHEMERAL, embeds: [], components: [] }).catch(() => {});
 	}
 });
-bot.login(botconfig.token);
+
+// ---- Process ------------------------------------------------------------------------------
+
+process.on("unhandledRejection", (err) => console.error("Unhandled promise rejection:", err));
+for (const signal of ["SIGINT", "SIGTERM"]) {
+	process.once(signal, async () => {
+		await client.destroy();
+		process.exit(0);
+	});
+}
+
+client.login(config.token);

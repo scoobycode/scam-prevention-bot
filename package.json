@@ -1,31 +1,26 @@
 {
-	"name": "scam-reports",
-	"version": "1.0.0",
-	"description": "a scam reporting bot",
+	"name": "scam-prevention-bot",
+	"version": "2.0.0",
+	"description": "A Discord bot for reporting and checking Roblox scammers",
 	"main": "index.js",
+	"private": true,
+	"engines": {
+		"node": ">=22.12"
+	},
 	"scripts": {
-		"test": "eslint . && eslint test/. --env mocha && mocha",
-		"start": "node index.js",
-		"fix": "eslint . --fix && eslint test/. --env mocha --fix"
+		"start": "node --env-file-if-exists=.env index.js",
+		"test": "node --test",
+		"lint": "eslint .",
+		"fix": "eslint . --fix"
 	},
 	"author": "ethanlaj",
 	"license": "ISC",
 	"dependencies": {
-		"all": "0.0.0",
-		"babel-eslint": "^8.2.3",
-		"dblapi.js": "^2.0.0",
-		"discord.js": "^11.3.0",
-		"eslint": "^4.19.1",
-		"eslint-plugin-promise": "^3.8.0",
-		"express": "^4.16.3",
-		"mocha": "^5.2.0",
-		"node-gyp": "^3.7.0",
-		"random-string": "^0.2.0",
-		"request-promise-native": "^1.0.5",
-		"roblox-js": "^4.0.2"
+		"discord.js": "^14.24.2"
 	},
 	"devDependencies": {
-		"eslint-plugin-json": "^1.2.0",
-		"eslint-plugin-no-for-each": "github:ethanlaj/eslint-plugin-no-for-each"
+		"@eslint/js": "^9.39.0",
+		"eslint": "^9.39.0",
+		"globals": "^16.5.0"
 	}
 }

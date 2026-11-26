@@ -1,124 +1,65 @@
-const rbx = require("roblox-js");
+"use strict";
 
-async function awaitReply(message, question, limit = 60000) {
-	const filter = (m) => m.author.id === message.author.id;
-	await message.reply(question);
-	try {
-		const collected = await message.channel.awaitMessages(filter, { max: 1, time: limit, errors: ["time"] });
-		return collected.first().content;
-	} catch (error) {
-		return false;
-	}
+const { randomInt } = require("node:crypto");
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle } = require("discord.js");
+const roblox = require("../src/roblox");
+const { EPHEMERAL, infoEmbed, slash } = require("../src/util");
+
+const WORDS = ["vase", "hello", "lamp", "bus", "button", "book", "battery", "blanket", "mouse", "can", "rug", "pants", "pillow", "duck", "roblox", "lego"];
+const PENDING_TTL_MS = 10 * 60 * 1000;
+const pending = new Map();
+
+function makePhrase() {
+	const words = Array.from({ length: 5 }, () => WORDS[randomInt(WORDS.length)]);
+	return `music ${words.join(" ")}`;
 }
 
-async function everything(bot, message) {
-	const username = await awaitReply(message, "What is your Roblox username or ID?\n\nSay `cancel` to cancel this prompt.", 60000);
-	if (username == "cancel") return message.channel.send("Cancelled prompt.");
-	var errortf;
-	var userid = await rbx.getIdFromUsername(username).catch((err) => {
-		errortf = true;
-		message.reply(`${err}. Please try again. If this error persists, contact the bot developer.`);
-	});
-	if (errortf == true) return;
-	var randomwords = [" vase", " hello", " lamp", " bus", " button", " book", " battery", " blanket", " mouse", " can", " rug", " pants", " pillow", " duck", " roblox", " lego"];
-	var stoploop = 5;
-	randomstring = "music";
-	while (stoploop !== 0) {
-		var randomstring = randomstring + randomwords[Math.floor(Math.random() * randomwords.length)];
-		stoploop = stoploop - 1;
-	}
-	const awaitfinish = await awaitReply(message, `Please put the following text in your blurb or status: \`${randomstring}\`. Say \`done\` when finished.\n\nSay \`cancel\` to cancel this prompt.`, 120000);
-	if (awaitfinish == "cancel") return message.channel.send("Cancelled prompt.");
-	if (awaitfinish.toLowerCase() == "done") {
-		//var playerinfo = await rbx.getPlayerInfo(userid);
-		var blurb = await rbx.getBlurb(userid);
-		var status = await rbx.getStatus(userid);
-		if (blurb.includes(randomstring) || status.includes(randomstring)) {
-			// db code here putting username and discord id in the db
-			message.reply(`Successfully linked your Discord account to ${username}. This may take some time to update into the database`);
-			var dbguild = bot.guilds.get("443929284411654144");
-			var dbchannel = dbguild.channels.find((m) => m.name === "roblox-database");
-			var olo = await dbchannel.fetchMessages({ limit: 100 });
-			var msgcount = olo.size;
-			if (msgcount == "100") {
-				await dbchannel.setName("archived-roblox-database");
-				dbguild.createChannel("roblox-database", "text", [{
-					id: dbguild.id,
-					deny: ["READ_MESSAGES"],
-					allow: []
-				}]).then(() => {
-					var channelloop = 0;
-					var messageloop = 0;
-					var dbchannels = dbguild.channels.filter((m) => RegExp("roblox-database", "gi").test(m.name));
-					dbchannel = dbguild.channels.find((m) => m.name === "roblox-database");
-					for (let dbchannel of dbchannels.array()) {
-						dbchannel.fetchMessages({ limit: 100 }).then((messages) => {
-							for (let msg of messages.array()) {
-								if (msg.content.startsWith(`${message.author.id}`)) {
-									msg.delete();
-								}
-								messageloop = messageloop + 1;
-								if (messageloop == messages.size) {
-									messageloop = 0;
-									channelloop = channelloop + 1;
-									if (channelloop == dbchannels.size) {
-										message.channel.send(`${message.author.id} ${userid}`);
-									}
-								}
-							}
-						}).catch(() => {
-							return message.reply("Couldn't access the database, please try again.").catch(() => {
-								return message.author.send(`You attempted to use the \`verify\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-							});
-						});
-					}
-				}).catch(() => {
-					return message.reply("Couldn't access the database, please try again.").catch(() => {
-						return message.author.send(`You attempted to use the \`verify\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-					});
-				});
-			} else {
-				var channelloop = 0;
-				var messageloop = 0;
-				var dbchannels = dbguild.channels.filter((m) => RegExp("roblox-database", "gi").test(m.name));
-				dbchannel = dbguild.channels.find((m) => m.name === "roblox-database");
-				for (let dbchannel2 of dbchannels.array()) {
-					dbchannel2.fetchMessages({ limit: 100 }).then((messages) => {
-						for (let msg of messages.array()) {
-							if (msg.content.startsWith(`${message.author.id}`)) {
-								msg.delete();
-								dbchannel.send(`${message.author.id} ${userid}`);
-							} else {
-								messageloop = messageloop + 1;
-							}
-							if (messageloop == messages.size) {
-								messageloop = 0;
-								channelloop = channelloop + 1;
-								if (channelloop == dbchannels.size) {
-									dbchannel.send(`${message.author.id} ${userid}`);
-								}
-							}
-						}
-					}).catch(() => {
-						return message.reply("Couldn't access the database, please try again.").catch(() => {
-							return message.author.send(`You attempted to use the \`verify\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-						});
-					});
-				}
-			}
-		} else {
-			message.reply(`Could not find the following text: \`${randomstring}\` in your blurb or status, please retry the command.`);
+const buttons = () => new ActionRowBuilder().addComponents(
+	new ButtonBuilder().setCustomId("verify:check").setLabel("I've added it").setStyle(ButtonStyle.Success),
+	new ButtonBuilder().setCustomId("verify:cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary),
+);
+
+module.exports = {
+	category: "Public",
+	data: slash("verify", "Links your Roblox account to your Discord account")
+		.addStringOption((o) => o.setName("username").setDescription("Your Roblox username or user ID").setRequired(true).setMaxLength(20)),
+
+	async execute(interaction) {
+		const input = interaction.options.getString("username", true);
+		await interaction.deferReply({ flags: EPHEMERAL });
+		const user = await roblox.resolveUser(input);
+		if (!user) return interaction.editReply(`I couldn't find a Roblox user called \`${input}\`.`);
+
+		const attempt = { robloxId: user.id, robloxName: user.name, phrase: makePhrase() };
+		pending.set(interaction.user.id, attempt);
+		setTimeout(() => {
+			if (pending.get(interaction.user.id) === attempt) pending.delete(interaction.user.id);
+		}, PENDING_TTL_MS).unref();
+
+		await interaction.editReply({
+			embeds: [infoEmbed(`To prove you own **${user.name}**, put this text in your Roblox profile's **About** section:\n\n\`${attempt.phrase}\`\n\nThen press **I've added it**. This expires in 10 minutes.`)],
+			components: [buttons()],
+		});
+	},
+
+	async handleComponent(interaction, { stores }, [action]) {
+		const attempt = pending.get(interaction.user.id);
+		if (action === "cancel" || !attempt) {
+			pending.delete(interaction.user.id);
+			return interaction.update({ content: attempt ? "Cancelled prompt." : "This verification expired. Run `/verify` again.", embeds: [], components: [] });
 		}
-	} else {
-		message.reply("Invalid option. Options are `done` or `cancel`. Command has been cancelled, please retry.");
-	}
-}
 
-module.exports.run = async (bot, message) => {
-	everything(bot, message);
-};
-module.exports.help = {
-	name: "verify",
-	description: "Verifies your roblox account to your discord account",
-	type: "Public"
+		await interaction.deferUpdate();
+		const profile = await roblox.getUserFresh(attempt.robloxId);
+		if (!profile?.description?.toLowerCase().includes(attempt.phrase)) {
+			return interaction.editReply({
+				embeds: [infoEmbed(`I couldn't find \`${attempt.phrase}\` in **${attempt.robloxName}**'s About section yet. Roblox can take a minute to update, so double-check it saved and press the button again.`)],
+				components: [buttons()],
+			});
+		}
+
+		pending.delete(interaction.user.id);
+		await stores.verified.set({ key: interaction.user.id, value: attempt.robloxId });
+		await interaction.editReply({ content: `✅ Successfully linked your Discord account to **${attempt.robloxName}**. You can remove the text from your profile now.`, embeds: [], components: [] });
+	},
 };

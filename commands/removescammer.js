@@ -1,47 +1,34 @@
-const Discord = require("discord.js");
-const rbx = require("roblox-js");
+"use strict";
 
-module.exports.run = async (bot, message, args, prefix, permissionLevel) => {
-	if (permissionLevel > 0) {
-		let userid = args[0];
-		let post = bot.channels.get("469615976522973189");
-		let msgs = await post.fetchMessages({ limit: 100 });
-		if (userid) {
-			var errortf;
-			let user = await rbx.getIdFromUsername(args[0]).catch((err) => {
-				errortf = true;
-				return message.reply(`${err}. If error persists, contact support by doing !server.`).catch(() => {
-					return message.author.send(`You attempted to use the \`removescammer\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-				});
-			});
-			if (errortf == true) return;
+const roblox = require("../src/roblox");
+const { deleteMessages, fetchAllMessages } = require("../src/db");
+const { LEVELS } = require("../src/permissions");
+const { EPHEMERAL, field, getChannel, modLog, slash } = require("../src/util");
 
-			if (bot.data.scammers.find((value) => value.id === user.toString())) {
-				bot.data.scammers.find((value) => value.id === user.toString()).msg.delete();
-				bot.data.scammers.splice(bot.data.scammers.indexOf(bot.data.scammers.find((value) => value.id === user.toString())), 1);
-				var inchannel = msgs.find((m) => RegExp(user, "gi").test(m.content));
-				if (inchannel) inchannel.delete();
-				message.react("\u2705");
-				let mod = bot.channels.get("469621338089324544");
-				let log = new Discord.RichEmbed()
-					.setTitle("Removed Scammer")
-					.setColor("#FF0000")
-					.addField("Time Removed", message.createdAt)
-					.addField("Moderator", message.author)
-					.addField("User Removed", userid);
-				await mod.send(log);
-			} else return message.reply("This user is not in the scammers database!").catch(() => {
-				return message.author.send(`You attempted to use the \`removescammer\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-			});
+module.exports = {
+	category: "Support",
+	staffOnly: true,
+	requiredLevel: LEVELS.SUPPORT,
+	data: slash("removescammer", "Removes a scammer from the scammers database")
+		.addStringOption((o) => o.setName("username").setDescription("The scammer's Roblox username or user ID").setRequired(true).setMaxLength(20)),
 
-		}
-	}
+	async execute(interaction, { client, config, stores }) {
+		const input = interaction.options.getString("username", true);
+		await interaction.deferReply({ flags: EPHEMERAL });
+		const user = await roblox.resolveUser(input);
+		if (!user) return interaction.editReply("Invalid user.");
+		if (!stores.scammers.has(user.id)) return interaction.editReply(`**${user.name}** is not in the scammers database!`);
 
+		await stores.scammers.delete(user.id);
+		// Also remove their public post.
+		const posts = await getChannel(client, config.channels.scammerPosts);
+		const matches = (await fetchAllMessages(posts)).filter((m) => m.content.includes(`/users/${user.id}/`));
+		await deleteMessages(matches).catch((err) => console.warn("Couldn't remove the scammer post:", err));
 
-};
-
-module.exports.help = {
-	name: "removescammer",
-	description: "Removes a scammer from the scammers database",
-	type: "Support"
+		await interaction.editReply(`✅ Removed **${user.name}** from the scammer database.`);
+		await modLog(client, "Removed Scammer", [
+			field("Moderator", `<@${interaction.user.id}>`),
+			field("User Removed", `${user.name} (${user.id})`),
+		]);
+	},
 };

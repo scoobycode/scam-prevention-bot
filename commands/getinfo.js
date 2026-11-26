@@ -1,85 +1,37 @@
-const rbx = require("roblox-js");
-const request = require("request-promise");
+"use strict";
 
-/*async function getMembership(username) {
-	let response = await request({
-		uri: `https://www.roblox.com/Thumbs/BCOverlay.ashx?username=${username}`,
-		simple: false,
-		resolveWithFullResponse: true
-	});
-	let url = response.request.uri.href;
-	if (url.includes("overlay_obcOnly")) {
-		return "OBC";
-	} else if (url.includes("overlay_tbcOnly")) {
-		return "TBC";
-	} else if (url.includes("overlay_bcOnly")) {
-		return "BC";
-	} else {
-		return "NBC";
-	}
-}*/
+const { EmbedBuilder } = require("discord.js");
+const roblox = require("../src/roblox");
+const { COLORS, slash, timestamp } = require("../src/util");
 
-async function everything(args, message, bot) {
-	var target;
-	if (args[0] != null) {
-		target = message.guild.member(message.mentions.users.first() || message.guild.members.get(args[0]));
-		//console.log(args[0])
-	} else {
-		target = message.guild.members.get(message.author.id);
-	}
-	if (!target) return message.channel.send("Please **mention** a valid user.");
-	var dbguild = bot.guilds.get("443929284411654144");
-	var dbchannels = dbguild.channels.filter((m) => RegExp("roblox-database", "gi").test(m.name));
-	var count = 0;
-	var count2 = 0;
-	message.channel.send("Loading...").then((m) => {
-		for (let dbchannel of dbchannels.array()) {
-			count2 = count2 + 1;
-			dbchannel.fetchMessages({ limit: 100 }).then(async (messages) => {
-				for (let msg of messages.array()) {
-					if (msg.content.startsWith(`${target.id}`)) {
-						count = count - 1;
-						var msgargs = msg.content.split(" ").slice(1);
-						var userid = msgargs[0];
-						//var playerinfo = await rbx.getPlayerInfo(userid);
-						//var joindate = await playerinfo.joinDate.toString().slice(0, -39);
-						var friends = await rbx.getFriends(userid, "AllFriends");
-						var username = await rbx.getUsernameFromId(userid);
-						let response = await request({
-							uri: `https://www.roblox.com/Thumbs/BCOverlay.ashx?username=${username}`,
-							simple: false,
-							resolveWithFullResponse: true
-						});
-						let url = response.request.uri.href;
-						var membership = "NBC";
-						if (url.includes("overlay_obcOnly")) {
-							membership = "OBC";
-						} else if (url.includes("overlay_tbcOnly")) {
-							membership = "TBC";
-						} else if (url.includes("overlay_bcOnly")) {
-							membership = "BC";
-						}
-						m.edit(`**${target.user.tag}'s Roblox Info**\nUsername: \`${username}\`\nUser ID: \`${userid}\`\nFriends: \`${friends.total}/200\`\nMembership: \`${membership}\``);
-					}
-					count = count + 1;
-					if (count == messages.size && count2 == dbchannels.size) return m.edit(`${target.user.tag} is not verified, please tell them to run \`!verify\``);
-				}
-			}).catch(() => {
-				return message.reply("Couldn't fetch data from the database. Please try again.").catch(() => {
-					return message.author.send(`You attempted to use the \`getinfo\` command in ${message.channel}, but I can not chat there.`).catch(function() {});
-				});
-			});
+module.exports = {
+	category: "Public",
+	data: slash("getinfo", "Gets a user's Roblox information")
+		.addUserOption((o) => o.setName("user").setDescription("Who to look up (defaults to you)")),
+	async execute(interaction, { stores }) {
+		const target = interaction.options.getUser("user") ?? interaction.user;
+		const link = stores.verified.get(target.id);
+		if (!link) {
+			return interaction.reply({ content: `${target.username} is not verified, please tell them to run \`/verify\`.`, allowedMentions: { parse: [] } });
 		}
-	}).catch(() => {
-		return message.author.send(`You attempted to use the \`getinfo\` command in ${message.channel}, but I can not chat there.`).catch(function() {});
-	});
-}
 
-module.exports.run = async (bot, message, args) => {
-	everything(args, message, bot);
-};
-module.exports.help = {
-	name: "getinfo",
-	description: "Gets a user's roblox information",
-	type: "Public"
+		await interaction.deferReply();
+		const [profile, friends] = await Promise.all([roblox.getUser(link.value), roblox.getFriendCount(link.value).catch(() => null)]);
+		if (!profile) return interaction.editReply(`${target.username}'s linked Roblox account (ID \`${link.value}\`) no longer exists.`);
+
+		const embed = new EmbedBuilder()
+			.setTitle(`${target.username}'s Roblox Info`)
+			.setURL(roblox.profileUrl(profile.id))
+			.setColor(COLORS.info)
+			.addFields(
+				{ name: "Username", value: `\`${profile.name}\``, inline: true },
+				{ name: "Display Name", value: `\`${profile.displayName}\``, inline: true },
+				{ name: "User ID", value: `\`${profile.id}\``, inline: true },
+				{ name: "Friends", value: friends === null ? "Unknown" : `\`${friends}\``, inline: true },
+				{ name: "Joined Roblox", value: profile.created ? timestamp(new Date(profile.created)) : "Unknown", inline: true },
+			);
+		if (profile.isBanned) embed.addFields({ name: "Status", value: "⛔ Banned from Roblox", inline: true });
+		if (stores.scammers.has(profile.id)) embed.addFields({ name: "⚠️ Warning", value: "This account is in our scammers database." });
+		await interaction.editReply({ embeds: [embed] });
+	},
 };

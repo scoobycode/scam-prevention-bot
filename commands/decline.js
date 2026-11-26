@@ -1,55 +1,39 @@
-const Discord = require("discord.js");
+"use strict";
+
+const { LEVELS } = require("../src/permissions");
+const { EPHEMERAL, field, infoEmbed, modLog, slash } = require("../src/util");
+
+const DEFAULT_MESSAGE = ":x: **Scam Report Declined -- After reviewing your report, our moderators and admins have decided this is not a valid scam report. This might have been declined due to lack of evidence or lack of information in general. As a result, this user will not be added to our database.** :x:";
 
 module.exports = {
-	help: {
-		name: "decline",
-		description: "Declines a user's scam report",
-		type: "Support"
+	category: "Support",
+	staffOnly: true,
+	requiredLevel: LEVELS.SUPPORT,
+	data: slash("decline", "Declines a user's scam report")
+		.addIntegerOption((o) => o.setName("case").setDescription("The case number").setRequired(true).setMinValue(1))
+		.addStringOption((o) => o.setName("reason").setDescription("Why it was declined (sent to the reporter)").setMaxLength(1000)),
+
+	async execute(interaction, { client, reports }) {
+		const caseNumber = interaction.options.getInteger("case", true);
+		const reason = interaction.options.getString("reason");
+		await interaction.deferReply({ flags: EPHEMERAL });
+		const report = await reports.findByCase(caseNumber);
+		if (!report) return interaction.editReply("Please provide a correct case number!");
+
+		const user = report.reporterId ? await client.users.fetch(report.reporterId).catch(() => null) : null;
+		const text = reason
+			? `:x: **Scam Report Declined -- After reviewing your report, our staff members have decided this is not a valid scam report. Here is the reason your report was declined: ${reason}** :x:`
+			: DEFAULT_MESSAGE;
+		const dmSent = user ? await user.send({ embeds: [infoEmbed(text)] }).then(() => true, () => false) : false;
+
+		await reports.remove(report);
+		await interaction.editReply(`✅ Declined case #${caseNumber}.${dmSent ? "" : " I couldn't DM the reporter."}`);
+		await modLog(client, "Declined Report", [
+			field("Case Number", String(caseNumber)),
+			field("Moderator", `<@${interaction.user.id}>`),
+			field("Declined", user?.username ?? "Unknown user"),
+			field("Declined ID", report.reporterId ?? "Unknown"),
+			field("Reason", reason ?? "No reason provided."),
+		]);
 	},
-	run: async (bot, message, args, prefix, permissionLevel) => {
-		if (permissionLevel > 0) {
-			let casenumber = args[0];
-			if (!casenumber) return message.reply("Please provide a case number!").catch(() => {
-				return message.author.send(`You attempted to use the \`decline\` command in ${message.channel}, but I can not chat there.`).catch(function() {});
-			});
-			let reportschannel = bot.channels.get("469621223513522216");
-			var delmessage;
-			await reportschannel.fetchMessages({ limit: 100 }).then((reports) => {
-				delmessage = reports.find((m) => m.embeds && m.embeds[0] && m.embeds[0].fields && m.embeds[0].fields[0].value === casenumber);
-			});
-			if (!delmessage) return message.reply("Please provide a correct case number!").catch(() => {
-				return message.author.send(`You attempted to use the \`decline\` command in ${message.channel}, but I can not chat there.`).catch(function() {});
-			});
-			let userid = delmessage.embeds[0].fields[5].value;
-			let user = await bot.fetchUser(userid);
-			if (!user) return message.reply("Couldn't find user!").catch(() => {
-				return message.author.send(`You attempted to use the \`decline\` command in ${message.channel}, but I can not chat there.`).catch(function() {});
-			});
-			let reason = message.content.substr(8 + prefix.length + args[0].length);
-			var prompt = (`:x: **Scam Report Declined -- After reviewing your report, our staff members have decided this is not a valid scam report. Here is the reason your bot was declined: ${reason}** :x:`);
-			if (!reason) prompt = (":x: **Scam Report Declined -- After reviewing your report, our moderators and admins have decided this is not a valid scam report. This might have been declined due to lack of evidence or lack of information in general. As a result, this user will not be added to our database.** :x:");
-			if (!reason) reason = "No reason provided.";
-			let declineprompt = new Discord.RichEmbed()
-				.setColor("#0000FF")
-				.setDescription(prompt);
-			await user.send(declineprompt).then(() => {
-				message.react("✅").catch(function() {});
-			}).catch(() => {
-				message.reply("Couldn't DM this user!").catch(() => {
-					return message.author.send(`You attempted to use the \`decline\` command in ${message.channel}, but I can not chat there.`).catch(function() {});
-				});
-			});
-			let mod = bot.channels.get("469621338089324544");
-			let log = new Discord.RichEmbed()
-				.setTitle("Declined Report")
-				.setColor("#FF0000")
-				.addField("Time Declined", message.createdAt)
-				.addField("Moderator", message.author)
-				.addField("Declined", user.tag)
-				.addField("Declined ID", user.id)
-				.addField("Reason", reason);
-			await mod.send(log).catch(function() {});
-			if (delmessage) await delmessage.delete().catch(function() {});
-		}
-	}
 };

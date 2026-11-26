@@ -1,34 +1,50 @@
+"use strict";
+
+const { PermissionFlagsBits } = require("discord.js");
+const { EPHEMERAL, slash } = require("../src/util");
+
 module.exports = {
-	help: {
-		name: "banscammers",
-		description: "Bans all scammmers from your server",
-		type: "Premium"
-	},
-	run: async function(bot, message) {
-		if (message.member.hasPermission("BAN_MEMBERS")) {
-			if (bot.data.pusers.find((value) => value.id === message.author.id) != null) {
-				if (message.guild.me.hasPermission("BAN_MEMBERS")) {
-					message.reply("Attempting to ban all scammers from this server (if any).");
-					var scammers = await bot.channels.get("444588565154889738").fetchMessages({ limit: 100 });
-					scammers = scammers.map((user) => user.content);
-					var verifiedPeople = await bot.channels.get("443931376287481858").fetchMessages({ limit: 100 });
-					verifiedPeople = verifiedPeople.map((user) => user.content.split(" "));
-					var membersToBan = verifiedPeople.filter((user) => scammers.includes(user[1]));
-					for (let member of membersToBan.array()) {
-						message.guild.ban(member[0]).catch(() => {});
-					}
-				} else {
-					message.reply("I do not have permissions to ban members in this server.").catch(() => {});
-				}
-			} else {
-				message.reply("This is a premium only command. You are not premium.").catch(() => {
-					message.author.send(`You attempted to use the \`banscammers\` command in ${message.channel}, but I can not chat there.`).catch(() => {});
-				});
+	category: "Premium",
+	data: slash("banscammers", "Bans every verified scammer from your server")
+		.setDefaultMemberPermissions(PermissionFlagsBits.BanMembers),
+
+	async execute(interaction, { isPremium, stores }) {
+		if (!interaction.memberPermissions?.has(PermissionFlagsBits.BanMembers)) {
+			return interaction.reply({ content: "You do not have permission to use this command.", flags: EPHEMERAL });
+		}
+		if (!isPremium(interaction.user.id)) {
+			return interaction.reply({ content: "This is a premium only command. You are not premium. Run `/buypremium` to get it.", flags: EPHEMERAL });
+		}
+		const me = interaction.guild.members.me;
+		if (!me.permissions.has(PermissionFlagsBits.BanMembers)) {
+			return interaction.reply({ content: "I do not have permission to ban members in this server.", flags: EPHEMERAL });
+		}
+
+		// Discord accounts linked (through /verify) to a Roblox account in the scammers database.
+		const targets = [...stores.verified.values()]
+			.filter((link) => stores.scammers.has(link.value))
+			.map((link) => link.key)
+			.filter((id) => id !== interaction.guild.ownerId && id !== interaction.client.user.id);
+		if (!targets.length) return interaction.reply("There are no known scammers to ban.");
+
+		await interaction.deferReply();
+		const reason = `Known scammer (Scam Prevention Bot, requested by ${interaction.user.username})`;
+		let banned = 0;
+		let failed = 0;
+
+		if (me.permissions.has(PermissionFlagsBits.ManageGuild)) {
+			// Bulk ban: up to 200 users per request, much faster than one at a time.
+			for (let i = 0; i < targets.length; i += 200) {
+				const result = await interaction.guild.bans.bulkCreate(targets.slice(i, i + 200), { reason });
+				banned += result.bannedUsers.length;
+				failed += result.failedUsers.length;
 			}
 		} else {
-			message.reply("You do not have permission to use this command").catch(() => {
-				message.author.send(`You attempted to use the \`banscammers\` command in ${message.channel}, but I can not chat there.`).catch(() => {});
-			});
+			for (const id of targets) {
+				await interaction.guild.bans.create(id, { reason }).then(() => banned++, () => failed++);
+			}
 		}
-	}
+
+		await interaction.editReply(`🔨 Banned ${banned} known scammer${banned === 1 ? "" : "s"}${failed ? ` (${failed} couldn't be banned or were already banned)` : ""}.`);
+	},
 };

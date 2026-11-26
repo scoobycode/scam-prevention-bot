@@ -1,45 +1,30 @@
-const { RichEmbed } = require("discord.js");
-const rbx = require("roblox-js");
+"use strict";
+
+const roblox = require("../src/roblox");
+const { LEVELS } = require("../src/permissions");
+const { EPHEMERAL, field, getChannel, modLog, slash } = require("../src/util");
 
 module.exports = {
-	help: {
-		name: "addscammer",
-		description: "Adds a scammer to the scammers database",
-		type: "Support"
+	category: "Support",
+	staffOnly: true,
+	requiredLevel: LEVELS.SUPPORT,
+	data: slash("addscammer", "Adds a scammer to the scammers database")
+		.addStringOption((o) => o.setName("username").setDescription("The scammer's Roblox username").setRequired(true).setMaxLength(20)),
+
+	async execute(interaction, { client, config, stores }) {
+		const username = interaction.options.getString("username", true);
+		await interaction.deferReply({ flags: EPHEMERAL });
+		const user = await roblox.resolveUser(username);
+		if (!user) return interaction.editReply("Invalid user.");
+		if (stores.scammers.has(user.id)) return interaction.editReply(`**${user.name}** is already in the scammer database!`);
+
+		await stores.scammers.set({ key: user.id });
+		const posts = await getChannel(client, config.channels.scammerPosts);
+		await posts.send(`**${user.name}**, ${roblox.profileUrl(user.id)}`).catch((err) => console.warn("Couldn't post the new scammer:", err));
+		await interaction.editReply(`✅ Added **${user.name}** to the scammer database.`);
+		await modLog(client, "Scammer Added", [
+			field("Moderator", `<@${interaction.user.id}>`),
+			field("User Added", `${user.name} (${user.id})`),
+		]);
 	},
-	run: async function(bot, message, args, _, permissionLevel) {
-		if (permissionLevel > 0) {
-			var scammersChannel = bot.channels.get("444588565154889738"),
-				post = bot.channels.get("469615976522973189"),
-				userID = args[0];
-			if (userID != null) {
-				var user = await rbx.getIdFromUsername(args[0]);
-				if (user != null) {
-					if (bot.data.scammers.find((value) => value.id === user.toString()) != null) {
-						scammersChannel.send(user.toString()).then((newmessage) => {
-							bot.data.scammers.push({ msg: newmessage, id: user.toString() });
-						}).catch(() => {});
-						post.send(`**${userID}**, https://www.roblox.com/users/${user}/profile`).catch(() => {});
-						message.react("\u2705").catch(() => {});
-						var mod = bot.channels.get("469621338089324544");
-						var log = new RichEmbed()
-							.setTitle("Scammer Added")
-							.setColor("#FF0000")
-							.addField("Time Added", message.createdAt)
-							.addField("Moderator", message.author)
-							.addField("User Added", userID.toString());
-						mod.send({ embed: log }).catch(() => {});
-					} else {
-						message.reply("This user is already in the scammer database!").catch(() => {
-							message.author.send(`You attempted to use the \`addscammer\` command in ${message.channel}, but I can not chat there.`).catch(() => {});
-						});
-					}
-				} else {
-					message.reply("Invalid user.").catch(() => {
-						message.author.send(`You attempted to use the \`addscammer\` command in ${message.channel}, but I can not chat there.`).catch(() => {});
-					});
-				}
-			}
-		}
-	}
 };

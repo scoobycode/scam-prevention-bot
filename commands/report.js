@@ -1,196 +1,133 @@
-const Discord = require("discord.js");
-async function awaitReply(message, question, limit = 300000) {
-	const filter = (m) => m.author.id === message.author.id;
-	var questionembed = new Discord.RichEmbed()
-		.setColor("#0000FF")
-		.setDescription(question)
-		.setFooter("This prompt will automatically cancel if you do not reply in 5 minutes.");
-	await message.author.send(questionembed).catch(function () { });
+"use strict";
+
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("discord.js");
+const roblox = require("../src/roblox");
+const { nextCaseNumber } = require("../src/reports");
+const { COLORS, EPHEMERAL, field, getChannel, infoEmbed, slash, timestamp, truncate } = require("../src/util");
+
+const DRAFT_TTL_MS = 10 * 60 * 1000;
+const drafts = new Map();
+
+function proofText(draft) {
+	const lines = [...draft.links];
+	if (draft.attachments.length) lines.push(`${draft.attachments.length} file${draft.attachments.length === 1 ? "" : "s"} attached to this message`);
+	return lines.join("\n");
+}
+
+function reportEmbed(title, draft, caseNumber) {
+	const scammer = draft.scammer ? `${draft.scammer.name} (${roblox.profileUrl(draft.scammer.id)})` : draft.scammerInput;
+	return new EmbedBuilder()
+		.setTitle(title)
+		.setColor(COLORS.log)
+		.addFields(
+			// Field names are read back by /accept, /decline and /cancelreport, so keep them the same.
+			field("Case Number", String(caseNumber)),
+			field("Guild Reported From", draft.guildName),
+			field("Guild ID", draft.guildId),
+			field("Reporter", `<@${draft.reporterId}>`),
+			field("Reporter's Username", draft.reporterName),
+			field("Reporter's User ID", draft.reporterId),
+			field("Time Reported", timestamp(new Date(draft.createdAt))),
+			field("Reported User", scammer),
+			field("Reporter's Roblox Username", draft.reporterRoblox),
+			field("Proof Of Scam", proofText(draft)),
+			field("Description", draft.description),
+		);
+}
+
+/** Sends a report with its proof files re-uploaded (Discord's links to the originals expire). */
+async function sendReport(channel, embed, draft) {
+	const files = draft.attachments.map((a) => ({ attachment: a.url, name: a.name }));
 	try {
-		const collected = await message.author.dmChannel.awaitMessages(filter, { max: 1, time: limit, errors: ["time"] });
-		return collected.first();
-	} catch (error) {
-		return ("Prompt cancelled, no response after five minutes");
+		return await channel.send({ embeds: [embed], files, allowedMentions: { parse: [] } });
+	} catch (err) {
+		if (!files.length) throw err;
+		// Files too big to re-upload: fall back to links.
+		const withLinks = EmbedBuilder.from(embed).spliceFields(9, 1, field("Proof Of Scam", [...draft.links, ...draft.attachments.map((a) => a.url)].join("\n")));
+		return channel.send({ embeds: [withLinks], allowedMentions: { parse: [] } });
 	}
 }
-module.exports.run = async (bot, message) => {
-	var timelimitembed = new Discord.RichEmbed()
-		.setColor("#0000FF")
-		.setDescription("Prompt cancelled, no response after five minutes");
-	let reportchannel = bot.channels.get("469621223513522216");
-	let reportmessages = await reportchannel.fetchMessages({ limit: 100 });
-	if (reportchannel.topic.toLowerCase() === "closed") return message.reply("🔨We are currently undergoing maintenance! We will be back soon!🔨").catch(() => {
-		return message.author.send(`You attempted to use the \`report\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-	});
-	if (bot.data.blacklistedUsers.find((value) => value.id === message.author.id)) return message.reply("You cannot use this command because you are blacklisted!").catch(() => {
-		return message.author.send(`You attempted to use the \`report\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-	});
-	if (bot.data.blacklistedGuilds.find((value) => value.id === message.guild.id)) return message.reply("You cannot use this command because this guild is blacklisted from using this command!").catch(() => {
-		return message.author.send(`You attempted to use the \`report\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-	});
-	if (bot.data.inPrompt.find((m) => m.id === message.author.id)) return message.reply("You are already in a prompt with the bot! Please cancel that prompt and try again.").catch(() => {
-		return message.author.send(`You attempted to use the \`report\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-	});
-	var cancelembed = new Discord.RichEmbed()
-		.setColor("#0000FF")
-		.setDescription("Prompt Cancelled");
-	if (reportmessages.filter((m) => m.embeds[0] && m.embeds[0].fields && m.embeds[0].fields[5].value === message.author.id).first()) return message.reply("You cannot use this command because you already have a pending report. To prevent spam, you must wait until your report is accepted or denied. If you don't want to wait, you can cancel your report by using `!cancelreport`.").catch(() => {
-		return message.author.send(`You attempted to use the \`report\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-	});
-	var startingreport = new Discord.RichEmbed()
-		.setColor("#0000FF")
-		.setDescription("Hello! This is the report prompt! Please answer all questions to the best of your ability and remember, false reports will cause you to get blacklisted from the system!");
-	await message.author.send(startingreport).catch(() => {
-		return message.reply("I could not DM you the prompt! Check your privacy settings and try again!").catch(() => {
-			return message.author.send(`You attempted to use the \`report\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
+
+module.exports = {
+	category: "Public",
+	data: slash("report", "Reports a scammer to our staff team")
+		.addStringOption((o) => o.setName("scammer").setDescription("The scammer's Roblox username").setRequired(true).setMaxLength(20))
+		.addStringOption((o) => o.setName("your_username").setDescription("Your Roblox username").setRequired(true).setMaxLength(20))
+		.addStringOption((o) => o.setName("description").setDescription("How were you scammed? Explain anything we need to know.").setRequired(true).setMaxLength(1000))
+		.addAttachmentOption((o) => o.setName("proof").setDescription("A screenshot or video proving the scam").setRequired(true))
+		.addAttachmentOption((o) => o.setName("proof2").setDescription("More proof"))
+		.addAttachmentOption((o) => o.setName("proof3").setDescription("More proof"))
+		.addStringOption((o) => o.setName("links").setDescription("Links to more proof, separated by spaces").setMaxLength(1000)),
+
+	async execute(interaction, { client, config, reports, stores }) {
+		await interaction.deferReply({ flags: EPHEMERAL });
+
+		const channel = await getChannel(client, config.channels.reports);
+		if ((channel.topic ?? "").trim().toLowerCase() === "closed") return interaction.editReply("🔨 We are currently undergoing maintenance! We will be back soon! 🔨");
+		if (stores.blacklistedUsers.has(interaction.user.id)) return interaction.editReply("You cannot use this command because you are blacklisted!");
+		if (stores.blacklistedGuilds.has(interaction.guildId)) return interaction.editReply("You cannot use this command because this server is blacklisted from using it!");
+		if (await reports.findByReporter(interaction.user.id)) {
+			return interaction.editReply("You already have a pending report. To prevent spam, you must wait until it is accepted or declined. If you don't want to wait, you can cancel it with `/cancelreport`.");
+		}
+
+		const scammerInput = interaction.options.getString("scammer", true).trim();
+		const scammer = await roblox.resolveUser(scammerInput).catch(() => undefined);
+		if (scammer === null) return interaction.editReply(`I couldn't find a Roblox user called \`${scammerInput}\`. Please check the spelling.`);
+
+		const draft = {
+			scammerInput,
+			scammer,
+			reporterId: interaction.user.id,
+			reporterName: interaction.user.username,
+			reporterRoblox: interaction.options.getString("your_username", true).trim(),
+			description: interaction.options.getString("description", true),
+			attachments: ["proof", "proof2", "proof3"].map((name) => interaction.options.getAttachment(name)).filter(Boolean).map((a) => ({ url: a.url, name: a.name })),
+			links: (interaction.options.getString("links") ?? "").split(/\s+/).filter((link) => /^https?:\/\/\S+$/i.test(link)),
+			guildId: interaction.guildId,
+			guildName: interaction.guild?.name ?? "Unknown",
+			createdAt: Date.now(),
+		};
+		drafts.set(interaction.user.id, draft);
+		setTimeout(() => {
+			if (drafts.get(interaction.user.id) === draft) drafts.delete(interaction.user.id);
+		}, DRAFT_TTL_MS).unref();
+
+		const preview = infoEmbed([
+			"**The following information will be sent:**",
+			`Scammer's Roblox Username: ${draft.scammer?.name ?? scammerInput}`,
+			`Your Roblox Username: ${draft.reporterRoblox}`,
+			`Proof Of Scam: ${draft.attachments.map((a) => a.name).concat(draft.links).join(", ")}`,
+			`Other Information: ${truncate(draft.description, 1500)}`,
+			"",
+			"Remember, false reports will get you blacklisted from the system!",
+		].join("\n"));
+		await interaction.editReply({
+			embeds: [preview],
+			components: [new ActionRowBuilder().addComponents(
+				new ButtonBuilder().setCustomId("report:confirm").setLabel("Send report").setStyle(ButtonStyle.Danger),
+				new ButtonBuilder().setCustomId("report:cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary),
+			)],
 		});
-	});
-	message.react("✅").catch(function () { });
-	message.channel.send(`${message.author}, Prompt will continue in DMs! 📬`).catch(() => {
-		return message.author.send(`You attempted to use the \`report\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-	});
-	bot.data.inPrompt.push({ id: message.author.id });
-	//----------------------------------------------------------------------------------------------------------------------------------
-	var rblxname = await awaitReply(message, "What is the scammer's roblox username?\nSay **cancel** to cancel prompt.", 300000);
-	if (rblxname === "Prompt cancelled, no response after five minutes") {
-		await message.author.send(timelimitembed).catch(function () { });
-		return bot.data.inPrompt.splice(bot.data.inPrompt.indexOf(bot.data.inPrompt.find((m) => m.id === message.author.id)), 1);
-	}
-	if (rblxname.content && rblxname.content.toLowerCase() === "cancel") {
-		bot.data.inPrompt.splice(bot.data.inPrompt.indexOf(bot.data.inPrompt.find((m) => m.id === message.author.id)), 1);
-		return await message.author.send(cancelembed).catch(function () { });
-	}
-	//----------------------------------------------------------------------------------------------------------------------------------
-	let urrblxname = await awaitReply(message, "What is your roblox username?\nSay **cancel** to cancel prompt.", 300000);
-	if (urrblxname.content.toLowerCase() === "cancel") {
-		await bot.data.inPrompt.splice(bot.data.inPrompt.indexOf(bot.data.inPrompt.find((m) => m.id === message.author.id)), 1);
-		return await message.author.send(cancelembed).catch(function () { });
-	}
-	if (urrblxname === "Prompt cancelled, no response after five minutes") {
-		await message.author.send(timelimitembed).catch(function () { });
-		return bot.data.inPrompt.splice(bot.data.inPrompt.indexOf(bot.data.inPrompt.find((m) => m.id === message.author.id)), 1);
-	}
-	//---------------------------------------------------------------------------------------------------------------------------------
-	const proofembed = new Discord.RichEmbed()
-		.setColor("#0000FF")
-		.setFooter("This prompt will automatically cancel if you do not reply in 5 minutes.")
-		.setDescription("Do you have any proof that they scammed you? Provide only images and links here.\nSay **done** to go to the next question.\nSay **cancel** to cancel prompt.");
-	await message.author.send(proofembed).catch(function () { });
-	const filter = (m) => m.author.id === message.author.id;
-	const collector = message.author.dmChannel.createMessageCollector(filter, {
-		time: 300000
-	});
-	var proof = await new Promise(function (resolve) {
-		collector.on("collect", async function (m) {
-			if (m.content.toLowerCase() === "done") {
-				collector.stop();
-			}
-			if (m.content.toLowerCase() === "cancel") {
-				bot.data.inPrompt.splice(bot.data.inPrompt.indexOf(bot.data.inPrompt.find((m) => m.id === message.author.id)), 1);
+	},
 
-				return message.author.send(cancelembed).catch(function () { });
-			}
+	async handleComponent(interaction, { client, config, reports }, [action]) {
+		const draft = drafts.get(interaction.user.id);
+		drafts.delete(interaction.user.id);
+		if (!draft) return interaction.update({ content: "This report expired. Run `/report` again.", embeds: [], components: [] });
+		if (action !== "confirm") return interaction.update({ content: "Prompt Cancelled.", embeds: [], components: [] });
+
+		await interaction.update({ content: "Sending your report…", embeds: [], components: [] });
+		const caseNumber = await nextCaseNumber(client);
+		const [reportsChannel, logChannel] = await Promise.all([getChannel(client, config.channels.reports), getChannel(client, config.channels.modLogs)]);
+		const [sent] = await Promise.all([
+			sendReport(reportsChannel, reportEmbed("New Scam Report", draft, caseNumber), draft),
+			sendReport(logChannel, reportEmbed("Copy Of Report - Logging Purposes", draft, caseNumber), draft).catch((err) => console.warn("Couldn't log report copy:", err)),
+		]);
+		reports.add(sent);
+
+		await interaction.editReply({
+			content: "",
+			embeds: [infoEmbed(`✅ **Successfully Submitted! -- Your report (case #${caseNumber}) will be reviewed by our admins and moderators shortly!** ✅`)],
 		});
-		collector.on("end", async function (collected) {
-			if (!collected.first()) {
-				bot.data.inPrompt.splice(bot.data.inPrompt.indexOf(bot.data.inPrompt.find((m) => m.id === message.author.id)), 1);
-
-				return message.author.send(timelimitembed).catch(function () { });
-			}
-			if (collected.size === 1) {
-				const byeembed = new Discord.RichEmbed()
-					.setColor("#0000FF")
-					.setDescription("You must provide at least some kind of proof! Prompt cancelled.");
-				bot.data.inPrompt.splice(bot.data.inPrompt.indexOf(bot.data.inPrompt.find((m) => m.id === message.author.id)), 1);
-
-				return await message.author.send(byeembed).catch(function () { });
-			}
-			let aproof = collected.filter((m) => m.content.startsWith("https://") || m.content.startsWith("http://"));
-			let abproof = aproof.array();
-			let aaproof = collected.filter((m) => m.attachments.first());
-			let bproof = aaproof.array();
-			let cproof = bproof.map((m) => m.attachments.first()
-				.url)
-				.join("\n");
-			let mproof = abproof.map((m) => m.content)
-				.join("\n");
-			resolve(`${cproof}\n${mproof}`);
-		});
-	});
-	const byeembedo = new Discord.RichEmbed()
-		.setColor("#0000FF")
-		.setDescription("You must provide at least some kind of proof! Prompt cancelled.");
-	if (proof === "\n") {
-		await bot.data.inPrompt.splice(bot.data.inPrompt.indexOf(bot.data.inPrompt.find((m) => m.id === message.author.id)), 1);
-		return message.author.send(byeembedo).catch(function () { });
-	}
-	//----------------------------------------------------------------------------------------------------------------------------------
-	let describe = await awaitReply(message, "How were you scammed? Explain anything we need to know here.\nSay **cancel** to cancel prompt.", 300000);
-	if (describe.content && describe.content.toLowerCase() === "cancel") {
-		bot.data.inPrompt.splice(bot.data.inPrompt.indexOf(bot.data.inPrompt.find((m) => m.id === message.author.id)), 1);
-		return await message.author.send(cancelembed).catch(function () { });
-	}
-	if (describe === "Prompt cancelled, no response after five minutes") {
-		await message.author.send(timelimitembed).catch(function () { });
-		return await bot.data.inPrompt.splice(bot.data.inPrompt.indexOf(bot.data.inPrompt.find((m) => m.id === message.author.id)), 1);
-
-	}
-	//----------------------------------------------------------------------------------------------------------------------------------
-	const confirm = await awaitReply(message, `**The following information will be sent:**\nScammer's Roblox Username: ${rblxname}\nYour Roblox Username: ${urrblxname}\nProof Of Scam: ${proof}\nOther Information: ${describe}\n---------------------------------------\nSay **confirm** to send the report.\nSay **cancel** to cancel the prompt.`, 300000);
-	if (confirm.content && confirm.content.toLowerCase() === "cancel") {
-		bot.data.inPrompt.splice(bot.data.inPrompt.indexOf(bot.data.inPrompt.find((m) => m.id === message.author.id)), 1);
-		return message.author.send(cancelembed).catch(function () { });
-	}
-	if (confirm === "Prompt cancelled, no response after five minutes") {
-		await message.author.send(timelimitembed).catch(function () { });
-		return await bot.data.inPrompt.splice(bot.data.inPrompt.indexOf(bot.data.inPrompt.find((m) => m.id === message.author.id)), 1);
-
-	}
-	//----------------------------------------------------------------------------------------------------------------------------------
-	let casechannel = bot.channels.get("444588562793627668");
-	let casenu = await casechannel.fetchMessage("444593973764292618");
-	let casenumber = Number(`${casenu.content}`);
-	await casenu.edit(`${casenumber + 1}`);
-	let casenua = await casechannel.fetchMessage("444593973764292618");
-	let reportEmbed = new Discord.RichEmbed()
-		.setTitle("New Scam Report")
-		.setColor("#FF0000")
-		.addField("Case Number", casenua.content)
-		.addField("Guild Reported From", message.guild.name)
-		.addField("Guild ID", message.guild.id)
-		.addField("Reporter", message.author)
-		.addField("Reporter's Username", message.author.tag)
-		.addField("Reporter's User ID", message.author.id)
-		.addField("Time Reported", message.createdAt)
-		.addField("Reported User", rblxname)
-		.addField("Reporter's Roblox Username", urrblxname)
-		.addField("Proof Of Scam", proof)
-		.addField("Description", describe);
-	reportchannel.send(reportEmbed).catch(function () { });
-	bot.data.inPrompt.splice(bot.data.inPrompt.indexOf(bot.data.inPrompt.find((m) => m.id === message.author.id)), 1);
-	var hmmtho = new Discord.RichEmbed()
-		.setColor("#0000FF")
-		.setDescription("✅ **Successfully Submitted! -- Your Response Was Submitted And Will Be Reviewed By Our Admins And Moderators Shortly!** ✅");
-	message.author.send(hmmtho).catch(function () { });
-	let mod = bot.channels.get("469621338089324544");
-	let areportEmbed = new Discord.RichEmbed()
-		.setTitle("Copy Of Report - Logging Purposes")
-		.setColor("#FF0000")
-		.addField("Case Number", casenua.content)
-		.addField("Guild Reported From", message.guild.name)
-		.addField("Guild ID", message.guild.id)
-		.addField("Reporter", message.author)
-		.addField("Reporter's Username", message.author.tag)
-		.addField("Reporter's User ID", message.author.id)
-		.addField("Time Reported", message.createdAt)
-		.addField("Reported User", rblxname)
-		.addField("Reporter's Roblox Username", urrblxname)
-		.addField("Proof Of Scam", proof)
-		.addField("Description", describe);
-	await mod.send(areportEmbed).catch(function () { });
-};
-module.exports.help = {
-	name: "report",
-	description: "Starts a prompt to report a scammer and send that prompt to the support server",
-	type: "Public"
+	},
 };

@@ -1,12 +1,11 @@
+"use strict";
+
+const { slash } = require("../src/util");
+
 module.exports = {
-	help: {
-		name: "count",
-		description: "Gives you our bot's server count",
-		type: "Public"
+	category: "Public",
+	data: slash("count", "Gives you our bot's server count"),
+	async execute(interaction) {
+		await interaction.reply(`${interaction.client.guilds.cache.size.toLocaleString("en-US")} servers!`);
 	},
-	run: async (bot, message) => {
-		message.reply(`${bot.guilds.size} servers!`).catch(() => {
-			return message.author.send(`You attempted to use the \`count\` command in ${message.channel}, but I can not chat there.`).catch(function() {});
-		});
-	}
 };

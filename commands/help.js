@@ -1,27 +1,30 @@
-const Discord = require("discord.js");
-module.exports.run = async (bot, message, args, prefix, permissionLevel) => {
-	var commandsEmbed = new Discord.RichEmbed()
-		.setTitle("Commands")
-		.setColor("#0000FF");
-	const TYPES = ["Public", "Premium", "Support", "Owners"],
-		MAP = (command) => `\`${prefix}${command.help.name}\` - ${command.help.description}`;
-	for (let type of TYPES) {
+"use strict";
 
-		if (type !== "Support" && type !== "Owners") {
-			commandsEmbed.addField(type, bot.commands.filter((command) => command.help.type === type).map(MAP));
-		} else if ((permissionLevel >= 1 && type === "Support") || (permissionLevel === 2 && type === "Owners")) {
-			commandsEmbed.addField(type, bot.commands.filter((command) => command.help.type === type).map(MAP));
+const { EmbedBuilder } = require("discord.js");
+const { COLORS, EPHEMERAL, slash } = require("../src/util");
+const { LEVELS } = require("../src/permissions");
+
+const CATEGORIES = [
+	{ name: "Public", level: LEVELS.PUBLIC },
+	{ name: "Premium", level: LEVELS.PUBLIC },
+	{ name: "Support", level: LEVELS.SUPPORT },
+	{ name: "Owners", level: LEVELS.OWNER },
+];
+
+module.exports = {
+	category: "Public",
+	data: slash("help", "Shows you a list of commands"),
+	async execute(interaction, { commands, permissionLevel }) {
+		const embed = new EmbedBuilder().setTitle("Commands").setColor(COLORS.info);
+		for (const category of CATEGORIES) {
+			if (permissionLevel < category.level) continue;
+			const lines = commands
+				.filter((command) => command.category === category.name)
+				.map((command) => `\`/${command.data.name}\` - ${command.data.description}`)
+				.sort();
+			if (lines.length) embed.addFields({ name: category.name, value: lines.join("\n") });
 		}
-	}
-
-	message.author.send({ embed: commandsEmbed }).then(() => {
-		message.react("\u2705").catch(function () {});
-	}).catch(() => {
-		message.reply("I could not DM you the list of commands! Please check your privacy commands and try again!").catch(function () {});
-	});
-};
-module.exports.help = {
-	name: "help",
-	description: "Sends you a list of commands",
-	type: "Public"
+		if (permissionLevel >= LEVELS.SUPPORT) embed.setFooter({ text: "Support and Owner commands only show up in the support server." });
+		await interaction.reply({ embeds: [embed], flags: EPHEMERAL });
+	},
 };

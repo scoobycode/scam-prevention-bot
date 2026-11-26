@@ -1,54 +1,29 @@
-module.exports.run = async (bot, message, args, prefix, permissionLevel) => {
-	if (permissionLevel !== 2) return;
-	var mentioneduser = message.mentions.users.first();
-	if (!mentioneduser) {
-		var id = args[0];
-		if (!id) return message.reply("Please mention a user or supply a user id!").catch(() => {
-			return message.author.send(`You attempted to use the \`puser\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-		});
-		mentioneduser = await bot.fetchUser(id).catch(() => {
-			return message.reply("Please mention a user or supply a valid user id!").catch(() => {
-				return message.author.send(`You attempted to use the \`puser\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-			});
-		});
-	}
-	let userschannel = bot.channels.get("444588564056113162");
-	let usercheck = bot.data.pusers.find((value) => value.id === mentioneduser.id);
-	if (usercheck) {
-		await usercheck.msg.delete().then(() => {
-			bot.data.pusers.splice(bot.data.pusers.indexOf(bot.data.pusers.find((value) => value.id === mentioneduser.id)), 1);
-			return message.reply("Removed this user's premium.").catch(() => {
-				return message.author.send(`You attempted to use the \`puser\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-			});
-		}).catch(() => {
-			return message.reply("Couldn't access the database to remove this user's premium. Please try again.").catch(() => {
-				return message.author.send(`You attempted to use the \`puser\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-			});
-		});
-	} else {
-		var rawExpires = args[1];
-		if (rawExpires === "0") rawExpires = 0;
-		if (!args[1]) return message.reply("Please include an expiration date or 0!").catch(() => {
-			return message.author.send(`You attempted to use the \`puser\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-		});
-		var addValue = Number(rawExpires) * 2678400000;
-		var expires = Date.now() + addValue;
-		if (rawExpires === 0) expires = 0;
-		await userschannel.send(`${mentioneduser.id} ${expires.toString()}`).then((newmsg) => {
-			bot.data.pusers.push({ msg: newmsg, id: mentioneduser.id, expires: expires.toString() });
-			message.reply("Successfully given this user premium!").catch(() => {
-				return message.author.send(`You attempted to use the \`puser\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-			});
-		}).catch(() => {
-			return message.reply("Couldn't access the database to give this user premium. Please try again.").catch(() => {
-				return message.author.send(`You attempted to use the \`puser\` command in ${message.channel}, but I can not chat there.`).catch(function () { });
-			});
-		});
-	}
+"use strict";
 
-};
-module.exports.help = {
-	name: "puser",
-	description: "Toggles a user's premium status",
-	type: "Owners"
+const { LEVELS } = require("../src/permissions");
+const { EPHEMERAL, slash, timestamp } = require("../src/util");
+
+module.exports = {
+	category: "Owners",
+	staffOnly: true,
+	requiredLevel: LEVELS.OWNER,
+	data: slash("puser", "Gives or removes a user's premium")
+		.addUserOption((o) => o.setName("user").setDescription("The user (you can paste a user ID)").setRequired(true))
+		.addIntegerOption((o) => o.setName("months").setDescription("How long to give premium for (0 = forever). Leave empty to remove premium.").setMinValue(0).setMaxValue(120)),
+
+	async execute(interaction, { config, stores }) {
+		const user = interaction.options.getUser("user", true);
+		const months = interaction.options.getInteger("months");
+		await interaction.deferReply({ flags: EPHEMERAL });
+
+		if (stores.premiumUsers.has(user.id) && months === null) {
+			await stores.premiumUsers.delete(user.id);
+			return interaction.editReply(`Removed **${user.username}**'s premium.`);
+		}
+		if (months === null) return interaction.editReply(`**${user.username}** doesn't have premium. Include \`months\` (0 = forever) to give it to them.`);
+
+		const expires = months === 0 ? 0 : Date.now() + months * config.monthMs;
+		await stores.premiumUsers.set({ key: user.id, value: String(expires) });
+		await interaction.editReply(`Successfully given **${user.username}** premium ${expires === 0 ? "forever" : `until ${timestamp(new Date(expires))}`}!`);
+	},
 };
