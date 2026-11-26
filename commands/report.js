@@ -1,26 +1,93 @@
 "use strict";
 
-const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("discord.js");
+// /report flow:
+//   1. /report  + attach a screenshot (up to 3)
+//   2. A form pops up: scammer's username, your username, what happened, optional links
+//   3. A preview with the scammer's avatar: Send / Edit / Cancel
+//   4. Sent to staff, with the screenshots re-uploaded so they never expire
+
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, ModalBuilder, TextInputBuilder, TextInputStyle } = require("discord.js");
 const roblox = require("../src/roblox");
 const { nextCaseNumber } = require("../src/reports");
 const { channelFor } = require("../src/channels");
 const { COLORS, EPHEMERAL, field, infoEmbed, slash, timestamp, truncate } = require("../src/util");
 
-const DRAFT_TTL_MS = 10 * 60 * 1000;
+const DRAFT_TTL_MS = 15 * 60 * 1000;
 const drafts = new Map();
 
-function proofText(draft) {
-	const lines = [...draft.links];
-	if (draft.attachments.length) lines.push(`${draft.attachments.length} file${draft.attachments.length === 1 ? "" : "s"} attached to this message`);
-	return lines.join("\n");
+// ---- Helpers ---------------------------------------------------------------------------------
+
+function saveDraft(userId, draft) {
+	drafts.set(userId, draft);
+	setTimeout(() => {
+		if (drafts.get(userId) === draft) drafts.delete(userId);
+	}, DRAFT_TTL_MS).unref();
+}
+
+const isMedia = (attachment) => !attachment.contentType || /^(image|video)\//.test(attachment.contentType);
+
+function form(draft) {
+	const input = (id, label, style, { placeholder, value, min, max, required = true }) => {
+		const text = new TextInputBuilder().setCustomId(id).setLabel(label).setStyle(style).setRequired(required).setMaxLength(max);
+		if (placeholder) text.setPlaceholder(placeholder);
+		if (min) text.setMinLength(min);
+		if (value) text.setValue(value);
+		return new ActionRowBuilder().addComponents(text);
+	};
+	return new ModalBuilder()
+		.setCustomId("report:form")
+		.setTitle("Report a scammer")
+		.addComponents(
+			input("scammer", "Scammer's Roblox username", TextInputStyle.Short, { placeholder: "e.g. Builderman", value: draft.scammerInput, min: 3, max: 20 }),
+			input("yours", "Your Roblox username", TextInputStyle.Short, { placeholder: "So staff can check your side of the trade", value: draft.reporterRoblox, min: 3, max: 20 }),
+			input("what", "What happened?", TextInputStyle.Paragraph, {
+				placeholder: "e.g. I traded my Dominus for 50k Robux, sent it, and they left without paying.",
+				value: draft.description,
+				min: 20,
+				max: 1000,
+			}),
+			input("links", "Extra proof links (optional)", TextInputStyle.Paragraph, {
+				placeholder: "YouTube, Gyazo or imgur links, one per line",
+				value: draft.links?.join("\n"),
+				max: 1000,
+				required: false,
+			}),
+		);
+}
+
+const buttons = (...list) => new ActionRowBuilder().addComponents(list.map(([id, label, style]) => new ButtonBuilder().setCustomId(`report:${id}`).setLabel(label).setStyle(style)));
+const SEND = ["confirm", "Send report", ButtonStyle.Success];
+const EDIT = ["edit", "Edit", ButtonStyle.Secondary];
+const FIX = ["edit", "Fix it", ButtonStyle.Primary];
+const CANCEL = ["cancel", "Cancel", ButtonStyle.Danger];
+
+function proofList(draft) {
+	return [...draft.attachments.map((a) => `📎 ${a.name}`), ...draft.links.map((l) => `🔗 ${l}`)].join("\n");
+}
+
+function previewEmbed(draft) {
+	const embed = new EmbedBuilder()
+		.setTitle("Check your report")
+		.setColor(COLORS.info)
+		.setDescription("Make sure everything is right, then press **Send report**. Staff will DM you when they've reviewed it.")
+		.addFields(
+			field("Scammer", `[${draft.scammer.name}](${roblox.profileUrl(draft.scammer.id)})${draft.scammer.displayName && draft.scammer.displayName !== draft.scammer.name ? ` (${draft.scammer.displayName})` : ""}`, true),
+			field("You", draft.reporterRoblox, true),
+			field("What happened", draft.description),
+			field("Proof", proofList(draft)),
+		)
+		.setFooter({ text: "⚠️ False reports get you blacklisted from reporting." });
+	if (draft.avatar) embed.setThumbnail(draft.avatar);
+	const firstImage = draft.attachments.find((a) => a.contentType?.startsWith("image/"));
+	if (firstImage) embed.setImage(firstImage.url);
+	return embed;
 }
 
 function reportEmbed(title, draft, caseNumber) {
-	const scammer = draft.scammer ? `${draft.scammer.name} (${roblox.profileUrl(draft.scammer.id)})` : draft.scammerInput;
 	return new EmbedBuilder()
-		.setThumbnail(draft.avatar ?? null)
 		.setTitle(title)
 		.setColor(COLORS.log)
+		.setThumbnail(draft.avatar ?? null)
 		.addFields(
 			// Field names are read back by /accept, /decline and /cancelreport, so keep them the same.
 			field("Case Number", String(caseNumber)),
@@ -30,9 +97,9 @@ function reportEmbed(title, draft, caseNumber) {
 			field("Reporter's Username", draft.reporterName),
 			field("Reporter's User ID", draft.reporterId),
 			field("Time Reported", timestamp(new Date(draft.createdAt))),
-			field("Reported User", scammer),
+			field("Reported User", `${draft.scammer.name} (${roblox.profileUrl(draft.scammer.id)})`),
 			field("Reporter's Roblox Username", draft.reporterRoblox),
-			field("Proof Of Scam", proofText(draft)),
+			field("Proof Of Scam", [...draft.links, draft.attachments.length ? `${draft.attachments.length} file(s) attached to this message` : ""].filter(Boolean).join("\n")),
 			field("Description", draft.description),
 		);
 }
@@ -50,90 +117,124 @@ async function sendReport(channel, embed, draft) {
 	}
 }
 
+/** Reasons this user can't report right now, or null. Uses cached data only, so the form opens instantly. */
+async function blocker(interaction, { reports, stores }) {
+	const channel = channelFor("reports");
+	if ((channel.topic ?? "").trim().toLowerCase() === "closed") return "🔨 Reports are closed for maintenance right now. Please try again later!";
+	if (stores.blacklistedUsers.has(interaction.user.id)) return "You can't send reports because you're blacklisted. If you think this is a mistake, ask in our support server (`/server`).";
+	if (stores.blacklistedGuilds.has(interaction.guildId)) return "Reports can't be sent from this server. Try running `/report` in another server.";
+	const pending = await reports.findByReporter(interaction.user.id);
+	if (pending) return `You already have a report waiting for review (case #${pending.caseNumber}). Please wait for staff to look at it, or cancel it with \`/cancelreport\` to send a new one.`;
+	return null;
+}
+
+// ---- Command ---------------------------------------------------------------------------------
+
 module.exports = {
 	category: "Public",
-	data: slash("report", "Reports a scammer to our staff team")
-		.addStringOption((o) => o.setName("scammer").setDescription("The scammer's Roblox username").setRequired(true).setMaxLength(20))
-		.addStringOption((o) => o.setName("your_username").setDescription("Your Roblox username").setRequired(true).setMaxLength(20))
-		.addStringOption((o) => o.setName("description").setDescription("How were you scammed? Explain anything we need to know.").setRequired(true).setMaxLength(1000))
-		.addAttachmentOption((o) => o.setName("proof").setDescription("A screenshot or video proving the scam").setRequired(true))
-		.addAttachmentOption((o) => o.setName("proof2").setDescription("More proof"))
-		.addAttachmentOption((o) => o.setName("proof3").setDescription("More proof"))
-		.addStringOption((o) => o.setName("links").setDescription("Links to more proof, separated by spaces").setMaxLength(1000)),
+	data: slash("report", "Report a scammer to our staff (attach a screenshot as proof)")
+		.addAttachmentOption((o) => o.setName("screenshot").setDescription("A screenshot or video that shows the scam").setRequired(true))
+		.addAttachmentOption((o) => o.setName("screenshot2").setDescription("Another screenshot (optional)"))
+		.addAttachmentOption((o) => o.setName("screenshot3").setDescription("Another screenshot (optional)")),
 
-	async execute(interaction, { reports, stores }) {
-		await interaction.deferReply({ flags: EPHEMERAL });
+	async execute(interaction, ctx) {
+		const reason = await blocker(interaction, ctx);
+		if (reason) return interaction.reply({ content: reason, flags: EPHEMERAL });
 
-		const channel = channelFor("reports");
-		if ((channel.topic ?? "").trim().toLowerCase() === "closed") return interaction.editReply("🔨 We are currently undergoing maintenance! We will be back soon! 🔨");
-		if (stores.blacklistedUsers.has(interaction.user.id)) return interaction.editReply("You cannot use this command because you are blacklisted!");
-		if (stores.blacklistedGuilds.has(interaction.guildId)) return interaction.editReply("You cannot use this command because this server is blacklisted from using it!");
-		if (await reports.findByReporter(interaction.user.id)) {
-			return interaction.editReply("You already have a pending report. To prevent spam, you must wait until it is accepted or declined. If you don't want to wait, you can cancel it with `/cancelreport`.");
+		const attachments = ["screenshot", "screenshot2", "screenshot3"].map((name) => interaction.options.getAttachment(name)).filter(Boolean);
+		if (!attachments.every(isMedia)) {
+			return interaction.reply({ content: "Proof has to be a picture or a video (like a .png, .jpg or .mp4). Please try again with a screenshot.", flags: EPHEMERAL });
 		}
 
-		const scammerInput = interaction.options.getString("scammer", true).trim();
-		const scammer = await roblox.resolveUser(scammerInput).catch(() => undefined);
-		if (scammer === null) return interaction.editReply(`I couldn't find a Roblox user called \`${scammerInput}\`. Please check the spelling.`);
-		const avatar = scammer ? await roblox.tryAvatarUrl(scammer.id, "headshot") : null;
-
 		const draft = {
-			scammerInput,
-			scammer,
-			avatar,
+			attachments: attachments.map((a) => ({ url: a.url, name: a.name, contentType: a.contentType })),
+			links: [],
 			reporterId: interaction.user.id,
 			reporterName: interaction.user.username,
-			reporterRoblox: interaction.options.getString("your_username", true).trim(),
-			description: interaction.options.getString("description", true),
-			attachments: ["proof", "proof2", "proof3"].map((name) => interaction.options.getAttachment(name)).filter(Boolean).map((a) => ({ url: a.url, name: a.name })),
-			links: (interaction.options.getString("links") ?? "").split(/\s+/).filter((link) => /^https?:\/\/\S+$/i.test(link)),
 			guildId: interaction.guildId,
 			guildName: interaction.guild?.name ?? "Unknown",
-			createdAt: Date.now(),
 		};
-		drafts.set(interaction.user.id, draft);
-		setTimeout(() => {
-			if (drafts.get(interaction.user.id) === draft) drafts.delete(interaction.user.id);
-		}, DRAFT_TTL_MS).unref();
-
-		const preview = infoEmbed([
-			"**The following information will be sent:**",
-			`Scammer's Roblox Username: ${draft.scammer?.name ?? scammerInput}`,
-			`Your Roblox Username: ${draft.reporterRoblox}`,
-			`Proof Of Scam: ${draft.attachments.map((a) => a.name).concat(draft.links).join(", ")}`,
-			`Other Information: ${truncate(draft.description, 1500)}`,
-			"",
-			"Remember, false reports will get you blacklisted from the system!",
-		].join("\n"));
-		if (avatar) preview.setThumbnail(avatar);
-		await interaction.editReply({
-			embeds: [preview],
-			components: [new ActionRowBuilder().addComponents(
-				new ButtonBuilder().setCustomId("report:confirm").setLabel("Send report").setStyle(ButtonStyle.Danger),
-				new ButtonBuilder().setCustomId("report:cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary),
-			)],
-		});
+		saveDraft(interaction.user.id, draft);
+		await interaction.showModal(form(draft));
 	},
 
-	async handleComponent(interaction, { reports, stores }, [action]) {
+	async handleComponent(interaction, ctx, [action]) {
+		const { reports, stores } = ctx;
 		const draft = drafts.get(interaction.user.id);
-		drafts.delete(interaction.user.id);
-		if (!draft) return interaction.update({ content: "This report expired. Run `/report` again.", embeds: [], components: [] });
-		if (action !== "confirm") return interaction.update({ content: "Prompt Cancelled.", embeds: [], components: [] });
+		if (!draft) {
+			const expired = { content: "This report timed out. Run `/report` again to start over.", embeds: [], components: [] };
+			return interaction.isModalSubmit() && !interaction.isFromMessage() ? interaction.reply({ ...expired, flags: EPHEMERAL }) : interaction.update(expired);
+		}
 
-		await interaction.update({ content: "Sending your report…", embeds: [], components: [] });
-		const caseNumber = await nextCaseNumber(stores);
-		const reportsChannel = channelFor("reports");
-		const logChannel = channelFor("modLogs");
-		const [sent] = await Promise.all([
-			sendReport(reportsChannel, reportEmbed("New Scam Report", draft, caseNumber), draft),
-			sendReport(logChannel, reportEmbed("Copy Of Report - Logging Purposes", draft, caseNumber), draft).catch((err) => console.warn("Couldn't log report copy:", err)),
-		]);
-		reports.add(sent);
+		if (action === "cancel") {
+			drafts.delete(interaction.user.id);
+			return interaction.update({ content: "Report cancelled. Nothing was sent.", embeds: [], components: [] });
+		}
 
-		await interaction.editReply({
-			content: "",
-			embeds: [infoEmbed(`✅ **Successfully Submitted! -- Your report (case #${caseNumber}) will be reviewed by our admins and moderators shortly!** ✅`)],
-		});
+		if (action === "edit") return interaction.showModal(form(draft));
+
+		if (action === "form") {
+			// The first form submission creates a new reply; submitting again after "Edit" updates it.
+			if (interaction.isFromMessage()) await interaction.deferUpdate();
+			else await interaction.deferReply({ flags: EPHEMERAL });
+
+			const value = (id) => interaction.fields.getTextInputValue(id).trim();
+			draft.scammerInput = value("scammer");
+			draft.reporterRoblox = value("yours");
+			draft.description = value("what");
+			const rawLinks = value("links").split(/\s+/).filter(Boolean);
+			draft.links = rawLinks.filter((link) => /^https?:\/\/\S+$/i.test(link));
+			const badLinks = rawLinks.length - draft.links.length;
+
+			const problem = (text) => interaction.editReply({ content: "", embeds: [infoEmbed(text)], components: [buttons(FIX, CANCEL)] });
+
+			const scammer = await roblox.resolveUser(draft.scammerInput);
+			if (!scammer) return problem(`❓ I couldn't find a Roblox user called **${draft.scammerInput}**.\nCheck the spelling (it's their **username**, not their display name) and press **Fix it**.`);
+			if (scammer.name.toLowerCase() === draft.reporterRoblox.toLowerCase()) return problem("You put the same name for you and the scammer. Press **Fix it** to change one of them.");
+			if (stores.scammers.has(scammer.id)) {
+				drafts.delete(interaction.user.id);
+				return interaction.editReply({
+					content: "",
+					embeds: [infoEmbed(`✅ **${scammer.name}** is already in our scammer database, so there's no need to report them again. Thanks for looking out!\n${roblox.profileUrl(scammer.id)}`)],
+					components: [],
+				});
+			}
+
+			draft.scammer = scammer;
+			draft.avatar = await roblox.tryAvatarUrl(scammer.id, "headshot");
+			return interaction.editReply({
+				content: badLinks ? `ℹ️ ${badLinks} link${badLinks === 1 ? " wasn't" : "s weren't"} added because ${badLinks === 1 ? "it doesn't" : "they don't"} start with http:// or https://.` : "",
+				embeds: [previewEmbed(draft)],
+				components: [buttons(SEND, EDIT, CANCEL)],
+			});
+		}
+
+		if (action === "confirm") {
+			if (!draft.scammer) return interaction.showModal(form(draft));
+			drafts.delete(interaction.user.id);
+			await interaction.update({ content: "📨 Sending your report…", embeds: [], components: [] });
+
+			// Things might have changed while the preview was open.
+			const reason = await blocker(interaction, ctx);
+			if (reason) return interaction.editReply(reason);
+
+			draft.createdAt = Date.now();
+			const caseNumber = await nextCaseNumber(stores);
+			const [sent] = await Promise.all([
+				sendReport(channelFor("reports"), reportEmbed("New Scam Report", draft, caseNumber), draft),
+				sendReport(channelFor("modLogs"), reportEmbed("Copy Of Report - Logging Purposes", draft, caseNumber), draft).catch((err) => console.warn("Couldn't log report copy:", err)),
+			]);
+			reports.add(sent);
+
+			return interaction.editReply({
+				content: "",
+				embeds: [infoEmbed([
+					`✅ **Report sent!** Your case number is **#${caseNumber}**.`,
+					"",
+					`Staff will review your report about **${truncate(draft.scammer.name, 20)}** and DM you with the result, so keep your DMs open.`,
+					"Changed your mind? Use `/cancelreport` any time before it's reviewed.",
+				].join("\n")).setThumbnail(draft.avatar ?? null)],
+			});
+		}
 	},
 };
