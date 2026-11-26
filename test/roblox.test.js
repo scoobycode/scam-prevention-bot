@@ -39,3 +39,19 @@ test("Roblox errors become friendly RobloxErrors", async () => {
 	roblox._setFetch(async () => json(404, {}));
 	assert.equal(await roblox.getUser("5"), null);
 });
+
+test("getAvatarUrl waits for Roblox to finish rendering", async () => {
+	let calls = 0;
+	roblox._setFetch(async (url) => {
+		calls++;
+		assert.match(url, /thumbnails\.roblox\.com\/v1\/users\/avatar\?userIds=7/);
+		return json(200, { data: [calls === 1 ? { state: "Pending" } : { state: "Completed", imageUrl: "https://tr.rbxcdn.com/abc.png" }] });
+	});
+	assert.equal(await roblox.getAvatarUrl("7", "full"), "https://tr.rbxcdn.com/abc.png");
+	assert.equal(calls, 2);
+});
+
+test("tryAvatarUrl never throws", async () => {
+	roblox._setFetch(async () => json(500, {}));
+	assert.equal(await roblox.tryAvatarUrl("8", "headshot"), null);
+});

@@ -73,6 +73,28 @@ function getFriendCount(id) {
 	});
 }
 
+/**
+ * Picture of a user's Roblox avatar, or null.
+ * kind: "headshot" (face, good for small thumbnails) or "full" (whole body).
+ */
+function getAvatarUrl(id, kind = "full") {
+	const endpoint = kind === "headshot" ? "avatar-headshot" : "avatar";
+	return cached(`avatar:${kind}:${id}`, async () => {
+		const url = `https://thumbnails.roblox.com/v1/users/${endpoint}?userIds=${encodeURIComponent(id)}&size=420x420&format=Png&isCircular=false`;
+		// Roblox sometimes needs a moment to render an avatar it hasn't drawn recently.
+		for (let attempt = 0; attempt < 3; attempt++) {
+			const image = (await robloxFetch(url))?.data?.[0];
+			if (image?.state === "Completed" && image.imageUrl) return image.imageUrl;
+			if (image?.state !== "Pending") return null;
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+		}
+		return null;
+	});
+}
+
+/** Same as getAvatarUrl, but never throws (an avatar is never worth failing a command over). */
+const tryAvatarUrl = (id, kind) => getAvatarUrl(id, kind).catch(() => null);
+
 /** Accepts a username (or a numeric user ID) and returns { id, name, displayName } or null. */
 async function resolveUser(input) {
 	const value = String(input ?? "").trim();
@@ -94,11 +116,13 @@ const profileUrl = (id) => `https://www.roblox.com/users/${id}/profile`;
 module.exports = {
 	RobloxError,
 	findUserByUsername,
+	getAvatarUrl,
 	getFriendCount,
 	getUser,
 	getUserFresh,
 	profileUrl,
 	resolveUser,
+	tryAvatarUrl,
 	// For tests.
 	_setFetch(fn) {
 		fetchImpl = fn;

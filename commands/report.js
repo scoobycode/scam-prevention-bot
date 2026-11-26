@@ -17,6 +17,7 @@ function proofText(draft) {
 function reportEmbed(title, draft, caseNumber) {
 	const scammer = draft.scammer ? `${draft.scammer.name} (${roblox.profileUrl(draft.scammer.id)})` : draft.scammerInput;
 	return new EmbedBuilder()
+		.setThumbnail(draft.avatar ?? null)
 		.setTitle(title)
 		.setColor(COLORS.log)
 		.addFields(
@@ -73,10 +74,12 @@ module.exports = {
 		const scammerInput = interaction.options.getString("scammer", true).trim();
 		const scammer = await roblox.resolveUser(scammerInput).catch(() => undefined);
 		if (scammer === null) return interaction.editReply(`I couldn't find a Roblox user called \`${scammerInput}\`. Please check the spelling.`);
+		const avatar = scammer ? await roblox.tryAvatarUrl(scammer.id, "headshot") : null;
 
 		const draft = {
 			scammerInput,
 			scammer,
+			avatar,
 			reporterId: interaction.user.id,
 			reporterName: interaction.user.username,
 			reporterRoblox: interaction.options.getString("your_username", true).trim(),
@@ -101,6 +104,7 @@ module.exports = {
 			"",
 			"Remember, false reports will get you blacklisted from the system!",
 		].join("\n"));
+		if (avatar) preview.setThumbnail(avatar);
 		await interaction.editReply({
 			embeds: [preview],
 			components: [new ActionRowBuilder().addComponents(

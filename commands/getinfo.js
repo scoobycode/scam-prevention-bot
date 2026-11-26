@@ -16,13 +16,18 @@ module.exports = {
 		}
 
 		await interaction.deferReply();
-		const [profile, friends] = await Promise.all([roblox.getUser(link.value), roblox.getFriendCount(link.value).catch(() => null)]);
+		const [profile, friends, avatar] = await Promise.all([
+			roblox.getUser(link.value),
+			roblox.getFriendCount(link.value).catch(() => null),
+			roblox.tryAvatarUrl(link.value, "headshot"),
+		]);
 		if (!profile) return interaction.editReply(`${target.username}'s linked Roblox account (ID \`${link.value}\`) no longer exists.`);
 
 		const embed = new EmbedBuilder()
 			.setTitle(`${target.username}'s Roblox Info`)
 			.setURL(roblox.profileUrl(profile.id))
 			.setColor(COLORS.info)
+			.setThumbnail(avatar)
 			.addFields(
 				{ name: "Username", value: `\`${profile.name}\``, inline: true },
 				{ name: "Display Name", value: `\`${profile.displayName}\``, inline: true },

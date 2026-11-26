@@ -1,5 +1,6 @@
 "use strict";
 
+const { EmbedBuilder } = require("discord.js");
 const roblox = require("../src/roblox");
 const { LEVELS } = require("../src/permissions");
 const { EPHEMERAL, field, getChannel, modLog, slash } = require("../src/util");
@@ -20,7 +21,16 @@ module.exports = {
 
 		await stores.scammers.set({ key: user.id });
 		const posts = await getChannel(client, config.channels.scammerPosts);
-		await posts.send(`**${user.name}**, ${roblox.profileUrl(user.id)}`).catch((err) => console.warn("Couldn't post the new scammer:", err));
+		const avatar = await roblox.tryAvatarUrl(user.id, "full");
+		const card = new EmbedBuilder()
+			.setTitle(`⚠️ ${user.name}`)
+			.setURL(roblox.profileUrl(user.id))
+			.setColor(0xff0000)
+			.setDescription(`Display name: **${user.displayName || user.name}**\nUser ID: \`${user.id}\``)
+			.setImage(avatar)
+			.setTimestamp();
+		// The profile link stays in the message text: /removescammer uses it to find this post.
+		await posts.send({ content: `**${user.name}**, ${roblox.profileUrl(user.id)}`, embeds: [card] }).catch((err) => console.warn("Couldn't post the new scammer:", err));
 		await interaction.editReply(`✅ Added **${user.name}** to the scammer database.`);
 		await modLog(client, "Scammer Added", [
 			field("Moderator", `<@${interaction.user.id}>`),
