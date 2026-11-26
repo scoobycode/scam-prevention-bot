@@ -1,68 +1,62 @@
 "use strict";
 
-const { ChannelStore, fetchAllMessages, formatPair, formatSingle, parsePair, parseSingle } = require("./db");
-const { channelFor, hasChannel } = require("./channels");
+// Where the bot's data lives:
+//   scammers        -> the posts in #list-of-scammers
+//   everything else -> tagged messages in the hidden #scam-bot-data channel, e.g. "premium-user 123 0"
+
+const { ChannelStore, fetchAllMessages, formatPair, formatSingle, parsePair, parseSingle, tagged } = require("./db");
+const { channelFor } = require("./channels");
 const { MetaStore } = require("./meta");
+const { ScammerStore } = require("./scammer-store");
 
 function createStores(client) {
-	const single = (key) => async () => {
-		const channel = channelFor(key);
+	const dataChannel = async () => {
+		const channel = channelFor("data");
 		return { read: [channel], write: channel };
 	};
+	const store = (name, tag, kind) => new ChannelStore({
+		name,
+		resolve: dataChannel,
+		...(kind === "pair" ? tagged(tag, parsePair, formatPair) : tagged(tag, parseSingle, formatSingle)),
+	});
 
 	const stores = {
 		// key: Roblox user ID
-		scammers: new ChannelStore({ name: "scammers", resolve: single("scammers"), parse: parseSingle, format: formatSingle }),
+		scammers: new ScammerStore(),
 		// key: Discord user ID
-		blacklistedUsers: new ChannelStore({ name: "blacklisted users", resolve: single("blacklistedUsers"), parse: parseSingle, format: formatSingle }),
+		blacklistedUsers: store("blacklisted users", "blacklist-user", "single"),
 		// key: Discord server ID
-		blacklistedGuilds: new ChannelStore({ name: "blacklisted servers", resolve: single("blacklistedGuilds"), parse: parseSingle, format: formatSingle }),
+		blacklistedGuilds: store("blacklisted servers", "blacklist-server", "single"),
 		// key: code, value: months of premium ("0" = forever)
-		premiumCodes: new ChannelStore({ name: "premium codes", resolve: single("premiumCodes"), parse: parsePair, format: formatPair }),
+		premiumCodes: store("premium codes", "premium-code", "pair"),
 		// key: Discord user ID, value: expiry timestamp in ms ("0" = never)
-		premiumUsers: new ChannelStore({ name: "premium users", resolve: single("premiumUsers"), parse: parsePair, format: formatPair }),
+		premiumUsers: store("premium users", "premium-user", "pair"),
 		// key: Discord user ID, value: Roblox user ID
-		verified: new ChannelStore({ name: "verified accounts", resolve: single("verified"), parse: parsePair, format: formatPair }),
+		verified: store("verified accounts", "verified", "pair"),
 	};
 
-	// The /updates text and the case counter.
-	const meta = new MetaStore(() => channelFor("settings"));
+	// The /updates text and the case counter ("updates:\n…", "case-counter:\n12").
+	stores.meta = new MetaStore(() => channelFor("data"));
 
-	stores.meta = meta;
 	stores.loadAll = async () => {
-		const names = Object.keys(stores).filter((name) => stores[name] instanceof ChannelStore);
-		const results = await Promise.allSettled(names.map((name) => stores[name].load()));
-		results.forEach((result, i) => {
-			if (result.status === "fulfilled") console.log(`Loaded ${result.value} ${stores[names[i]].name}.`);
-			else console.error(`Couldn't load the ${stores[names[i]].name} database: ${result.reason?.message ?? result.reason}`);
-		});
-		await meta.load(client.user.id).catch((err) => console.error("Couldn't load bot settings:", err.message));
+		await stores.scammers.load()
+			.then((n) => console.log(`Loaded ${n} scammers from #list-of-scammers.`))
+			.catch((err) => console.error("Couldn't load #list-of-scammers:", err.message));
+
+		// Every other kind of data shares #scam-bot-data, so read it once.
+		let messages;
+		try {
+			messages = await fetchAllMessages(channelFor("data"));
+		} catch (err) {
+			return console.error("Couldn't load #scam-bot-data:", err.message);
+		}
+		for (const s of Object.values(stores)) {
+			if (s instanceof ChannelStore) console.log(`Loaded ${s.loadFrom(messages, channelFor("data"))} ${s.name}.`);
+		}
+		stores.meta.loadFrom(messages, client.user.id);
 	};
 
 	return stores;
-}
-
-/**
- * The old database server is gone, but #list-of-scammers still has a post for every scammer.
- * When the scammer database is empty, rebuild it from those posts. Runs in the background.
- */
-async function seedScammersFromPosts(stores) {
-	if (stores.scammers.size > 0 || !hasChannel("scammerPosts")) return;
-	const posts = await fetchAllMessages(channelFor("scammerPosts"));
-	const ids = [...new Set(posts.reverse().flatMap((m) => [...m.content.matchAll(/roblox\.com\/users\/(\d+)/g)].map((match) => match[1])))];
-	if (!ids.length) return;
-	console.log(`Rebuilding the scammer database from #list-of-scammers (${ids.length} scammers)…`);
-	let saved = 0;
-	for (const id of ids) {
-		if (stores.scammers.has(id)) continue;
-		try {
-			await stores.scammers.set({ key: id });
-			saved++;
-		} catch (err) {
-			console.warn(`Couldn't save scammer ${id}:`, err.message);
-		}
-	}
-	console.log(`Scammer database rebuilt: ${saved} scammers saved.`);
 }
 
 /** True when the user has premium that hasn't expired. */
@@ -87,4 +81,4 @@ async function sweepExpiredPremium(client, stores) {
 	}
 }
 
-module.exports = { createStores, isPremium, seedScammersFromPosts, sweepExpiredPremium };
+module.exports = { createStores, isPremium, sweepExpiredPremium };

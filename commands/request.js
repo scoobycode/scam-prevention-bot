@@ -43,7 +43,7 @@ module.exports = {
 				field("Description", value("description")),
 				field("How To Contact", value("contact")),
 			);
-		const channel = channelFor("premiumRequests");
+		const channel = channelFor("modLogs");
 		await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
 		await interaction.reply({ content: "✅ Your request was sent! Abusing this will get your premium removed without a refund.", flags: EPHEMERAL });
 	},

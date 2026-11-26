@@ -1,10 +1,7 @@
 "use strict";
 
 const roblox = require("../src/roblox");
-const { deleteMessages, fetchAllMessages } = require("../src/db");
 const { LEVELS } = require("../src/permissions");
-const { isPostFor } = require("../src/scammer-post");
-const { channelFor } = require("../src/channels");
 const { EPHEMERAL, field, modLog, slash } = require("../src/util");
 
 module.exports = {
@@ -21,11 +18,8 @@ module.exports = {
 		if (!user) return interaction.editReply("Invalid user.");
 		if (!stores.scammers.has(user.id)) return interaction.editReply(`**${user.name}** is not in the scammers database!`);
 
+		// Deleting their post in #list-of-scammers is what removes them from the database.
 		await stores.scammers.delete(user.id);
-		// Also remove their public post.
-		const posts = channelFor("scammerPosts");
-		const matches = (await fetchAllMessages(posts)).filter((m) => isPostFor(m, user.id));
-		await deleteMessages(matches).catch((err) => console.warn("Couldn't remove the scammer post:", err));
 
 		await interaction.editReply(`✅ Removed **${user.name}** from the scammer database.`);
 		await modLog(client, "Removed Scammer", [

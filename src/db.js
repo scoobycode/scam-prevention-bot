@@ -41,6 +41,14 @@ function parsePair(content) {
 const formatSingle = (record) => record.key;
 const formatPair = (record) => `${record.key} ${record.value}`;
 
+/** Wraps a parser/formatter so records are tagged, letting several kinds share one channel: "premium-user 123 0". */
+function tagged(tag, parse, format) {
+	return {
+		parse: (content) => (String(content ?? "").startsWith(`${tag} `) ? parse(content.slice(tag.length + 1)) : null),
+		format: (record) => `${tag} ${format(record)}`,
+	};
+}
+
 class ChannelStore {
 	/**
 	 * @param {object} options
@@ -60,12 +68,17 @@ class ChannelStore {
 
 	async load() {
 		const { read, write } = await this.resolve();
-		this.writeChannel = write;
 		const pages = await Promise.all(read.map(fetchAllMessages));
+		return this.loadFrom(pages.flat(), write);
+	}
+
+	/** Builds the store from messages that were already fetched (several stores can share one channel). */
+	loadFrom(messages, writeChannel) {
+		this.writeChannel = writeChannel;
 		// Oldest first, so when a key appears more than once the newest record wins.
-		const messages = pages.flat().sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+		const sorted = [...messages].sort((a, b) => a.createdTimestamp - b.createdTimestamp);
 		const entries = new Map();
-		for (const message of messages) {
+		for (const message of sorted) {
 			const record = this.parse(message.content);
 			if (!record) continue;
 			const existing = entries.get(record.key);
@@ -123,4 +136,5 @@ module.exports = {
 	formatSingle,
 	parsePair,
 	parseSingle,
+	tagged,
 };

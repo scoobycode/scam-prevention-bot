@@ -1,10 +1,7 @@
 "use strict";
 
 const roblox = require("../src/roblox");
-const { deleteMessages, fetchAllMessages } = require("../src/db");
 const { LEVELS } = require("../src/permissions");
-const { isPostFor, scammerPost } = require("../src/scammer-post");
-const { channelFor } = require("../src/channels");
 const { EPHEMERAL, field, modLog, slash } = require("../src/util");
 
 let running = false;
@@ -27,20 +24,13 @@ module.exports = {
 			// Batched: 100 users per Roblox request instead of one request each.
 			const [users, avatars] = await Promise.all([roblox.getUsersBatch(ids), roblox.getAvatarUrlsBatch(ids)]);
 
-			const channel = channelFor("scammerPosts");
-			let oldPosts = await fetchAllMessages(channel);
-
 			let done = 0;
 			let failed = 0;
 			// Oldest scammer first, so the newest ones end up at the bottom like before.
 			for (const id of ids) {
 				try {
-					const user = users.get(id) ?? { id };
-					await channel.send(scammerPost(user, avatars.get(id) ?? null));
-					// Post the new one first, then remove the old one, so nobody is ever missing from the list.
-					const old = oldPosts.filter((message) => isPostFor(message, id) && message.author.id === client.user.id);
-					await deleteMessages(old);
-					oldPosts = oldPosts.filter((message) => !old.includes(message));
+					// Posts the new card first, then removes the old one, so nobody is ever missing from the list.
+					await stores.scammers.replace(users.get(id) ?? { id }, avatars.get(id) ?? null);
 					done++;
 				} catch (err) {
 					failed++;

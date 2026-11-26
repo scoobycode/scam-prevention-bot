@@ -24,30 +24,16 @@ module.exports = {
 		owner: "400511217061330955",
 	},
 
-	// Channels the bot uses in the support server. On startup it looks for each one by name and creates
-	// it if it's missing (legacyId is tried first, for channels that still exist from the old setup).
-	//   staff    = only the bot and staff roles can see it
-	//   public   = everyone can read, only the bot can post
-	//   database = only the bot can see it; it stores the bot's data as messages
+	// Channels the bot uses in the support server. It never creates channels, except #scam-bot-data
+	// (hidden, bot-only) if that one is missing.
 	channels: {
-		reports: { name: "scam-reports", kind: "staff", legacyId: "469621223513522216" },
-		modLogs: { name: "scam-logs", kind: "staff", legacyId: "469621338089324544" },
-		premiumRequests: { name: "premium-requests", kind: "staff", legacyId: "434126927406825474" },
-		scammerPosts: { name: "list-of-scammers", kind: "public", legacyId: "469615976522973189" },
-		scammers: { name: "db-scammers", kind: "database" },
-		blacklistedUsers: { name: "db-blacklisted-users", kind: "database" },
-		blacklistedGuilds: { name: "db-blacklisted-servers", kind: "database" },
-		premiumCodes: { name: "db-premium-codes", kind: "database" },
-		premiumUsers: { name: "db-premium-users", kind: "database" },
-		verified: { name: "db-verified", kind: "database" },
-		settings: { name: "db-settings", kind: "database" },
-	},
-
-	// Categories new channels are created in.
-	categories: {
-		staff: "Scam Reports Bot",
-		public: null,
-		database: "Scam Bot Database",
+		// Every post here is one scammer: this channel IS the scammer database.
+		scammerPosts: { id: "578332698939228160" },
+		reports: { id: "580919991415603219" },
+		// Staff logs and premium /request submissions.
+		modLogs: { name: "mod-logs" },
+		// Everything else (premium, codes, blacklists, verified accounts, /updates text, case numbers).
+		data: { name: "scam-bot-data", create: true },
 	},
 
 	// Upvote relay channels (only used with UPVOTE_RELAY=true).

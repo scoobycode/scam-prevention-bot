@@ -1,9 +1,7 @@
 "use strict";
 
 const roblox = require("../src/roblox");
-const { scammerPost } = require("../src/scammer-post");
 const { LEVELS } = require("../src/permissions");
-const { channelFor } = require("../src/channels");
 const { EPHEMERAL, field, modLog, slash } = require("../src/util");
 
 module.exports = {
@@ -20,10 +18,8 @@ module.exports = {
 		if (!user) return interaction.editReply("Invalid user.");
 		if (stores.scammers.has(user.id)) return interaction.editReply(`**${user.name}** is already in the scammer database!`);
 
-		await stores.scammers.set({ key: user.id });
-		const posts = channelFor("scammerPosts");
-		const avatar = await roblox.tryAvatarUrl(user.id, "full");
-		await posts.send(scammerPost(user, avatar)).catch((err) => console.warn("Couldn't post the new scammer:", err));
+		// Posting the card in #list-of-scammers is what adds them to the database.
+		await stores.scammers.add(user, await roblox.tryAvatarUrl(user.id, "full"));
 		await interaction.editReply(`✅ Added **${user.name}** to the scammer database.`);
 		await modLog(client, "Scammer Added", [
 			field("Moderator", `<@${interaction.user.id}>`),

@@ -69,3 +69,17 @@ test("ChannelStore loads, sets, replaces and deletes records", async () => {
 	assert.equal(await store.delete("2"), false);
 	assert.equal(store.has("2"), false);
 });
+
+test("tagged records let several stores share one channel", async () => {
+	const { tagged } = require("../src/db");
+	const channel = fakeChannel(["premium-user 1 0", "verified 1 999", "updates:\nhello", "premium-user 2 5"]);
+	const resolve = async () => ({ read: [channel], write: channel });
+	const premium = new ChannelStore({ name: "premium", resolve, ...tagged("premium-user", parsePair, formatPair) });
+	const verified = new ChannelStore({ name: "verified", resolve, ...tagged("verified", parsePair, formatPair) });
+	const all = await fetchAllMessages(channel);
+	assert.equal(premium.loadFrom(all, channel), 2);
+	assert.equal(verified.loadFrom(all, channel), 1);
+	assert.equal(verified.get("1").value, "999");
+	await premium.set({ key: "3", value: "0" });
+	assert.ok(channel.messages.list.some((m) => m.content === "premium-user 3 0"));
+});

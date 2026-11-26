@@ -1,6 +1,6 @@
 "use strict";
 
-// Single values (the /updates text, the case counter) stored as one bot message each in #db-settings.
+// Single values (the /updates text, the case counter) stored as one bot message each in #scam-bot-data.
 // Message format: "key:\nvalue".
 
 const { fetchAllMessages } = require("./db");
@@ -12,9 +12,12 @@ class MetaStore {
 	}
 
 	async load(botId) {
+		return this.loadFrom(await fetchAllMessages(this.getChannel()), botId);
+	}
+
+	loadFrom(messages, botId) {
 		this.entries.clear();
-		const messages = await fetchAllMessages(this.getChannel());
-		for (const message of messages.reverse()) {
+		for (const message of [...messages].sort((a, b) => a.createdTimestamp - b.createdTimestamp)) {
 			if (message.author.id !== botId) continue;
 			const match = /^([a-z-]+):\n?([\s\S]*)$/.exec(message.content);
 			if (match) this.entries.set(match[1], { value: match[2], message });
